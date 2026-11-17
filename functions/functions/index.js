@@ -1,0 +1,23 @@
+{
+  "_comment": "FILE: functions/package.json — LOCATION: your-project/functions/package.json",
+  "name": "functions",
+  "description": "Cloud Functions for JARVIS GPS Tracker",
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "shell": "firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "firebase-functions": "^5.0.0",
+    "nodemailer": "^6.9.0",
+    "cors": "^2.8.5"
+  },
+  "private": true
+}
