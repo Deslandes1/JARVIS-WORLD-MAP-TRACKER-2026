@@ -50,12 +50,11 @@ const { useState, useEffect, useCallback, useRef, memo } = React;
 
 /* ---------------------------------------------------------------
    FIREBASE CLOUD FUNCTION URL
-   After you deploy functions/index.js, paste the URL here.
-   Two options (pick ONE):
-     A) Direct:  'https://us-central1-YOUR-PROJECT.cloudfunctions.net/sendEmergencyEmail'
-     B) Rewrite: '/api/sendEmergency'
+   Project: jarvis-global-gps-tracker
+   After `firebase deploy`, this URL is live and receives the
+   emergency payload (email + picture base64 + WhatsApp numbers).
    --------------------------------------------------------------- */
-const FIREBASE_SEND_URL = '/api/sendEmergency';
+const FIREBASE_SEND_URL = 'https://us-central1-jarvis-global-gps-tracker.cloudfunctions.net/sendEmergencyEmail';
 
 /* ---------------------------------------------------------------
    STORAGE KEYS
