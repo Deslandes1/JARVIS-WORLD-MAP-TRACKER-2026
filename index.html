@@ -41,28 +41,33 @@
     const { useState, useEffect, useCallback, useRef, memo } = React;
 
     // ---------------------------------------------------------------------
+    // localStorage keys
+    // ---------------------------------------------------------------------
+    const STORAGE_KEYS = {
+        email: 'jarvis_emergency_email',
+        waPrimary: 'jarvis_emergency_wa_primary',
+        waSecondary: 'jarvis_emergency_wa_secondary',
+        pic: 'jarvis_emergency_profile_pic',
+        picName: 'jarvis_emergency_profile_pic_name',
+        savedAt: 'jarvis_emergency_saved_at'
+    };
+
+    // ---------------------------------------------------------------------
     // CRASH-SAFE ICON COMPONENT
-    // Renders a <i> with a data-lucide attribute. Lucide's global observer
-    // (or a manual pass) will replace it with SVG. We wrap createIcons in
-    // try/catch so a bad icon name NEVER crashes the React tree.
     // ---------------------------------------------------------------------
     const Icon = memo(({ name, className }) => {
         const ref = useRef(null);
-
         useEffect(() => {
             if (!window.lucide || !ref.current) return;
             try {
-                // Replace this specific element with its SVG
                 window.lucide.createIcons({
                     attrs: { class: className || '' },
                     nameAttr: 'data-lucide',
                 });
             } catch (e) {
-                // Swallow — a missing icon must never blank the app
                 console.warn('Lucide icon failed:', name, e);
             }
         }, [name, className]);
-
         return <i ref={ref} data-lucide={name} className={className}></i>;
     });
 
@@ -72,11 +77,7 @@
         if (!res.ok) throw new Error('Geocoding failed');
         const data = await res.json();
         if (!data || data.length === 0) throw new Error('Address not found');
-        return {
-            lat: parseFloat(data[0].lat),
-            lng: parseFloat(data[0].lon),
-            displayName: data[0].display_name
-        };
+        return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), displayName: data[0].display_name };
     };
 
     const reverseGeocode = async (lat, lng) => {
@@ -89,16 +90,9 @@
 
     function App() {
         const [deviceData, setDeviceData] = useState({
-            latitude: 18.5392,
-            longitude: -72.3364,
-            accuracy: null,
-            battery: 88,
-            signalStrength: 'Awaiting GPS lock…',
-            lastUpdated: 'Never',
-            status: 'STANDBY',
-            deviceName: 'Browser GPS Tracker',
-            address: null,
-            source: 'default'
+            latitude: 18.5392, longitude: -72.3364, accuracy: null, battery: 88,
+            signalStrength: 'Awaiting GPS lock…', lastUpdated: 'Never', status: 'STANDBY',
+            deviceName: 'Browser GPS Tracker', address: null, source: 'default'
         });
 
         const [isLoading, setIsLoading] = useState(false);
@@ -117,7 +111,35 @@
         const [profilePicName, setProfilePicName] = useState('');
         const [emergencyStatus, setEmergencyStatus] = useState('');
         const [emergencyStatusType, setEmergencyStatusType] = useState('');
+        const [emergencySavedAt, setEmergencySavedAt] = useState(null);
+        const [emergencySaved, setEmergencySaved] = useState(false); // whether profile is saved
         const fileInputRef = useRef(null);
+
+        // -----------------------------------------------------------------
+        // LOAD SAVED EMERGENCY PROFILE FROM localStorage on first mount
+        // -----------------------------------------------------------------
+        useEffect(() => {
+            try {
+                const savedEmail = localStorage.getItem(STORAGE_KEYS.email) || '';
+                const savedPrimary = localStorage.getItem(STORAGE_KEYS.waPrimary) || '';
+                const savedSecondary = localStorage.getItem(STORAGE_KEYS.waSecondary) || '';
+                const savedPic = localStorage.getItem(STORAGE_KEYS.pic) || null;
+                const savedPicName = localStorage.getItem(STORAGE_KEYS.picName) || '';
+                const savedAt = localStorage.getItem(STORAGE_KEYS.savedAt) || null;
+
+                setEmergencyEmail(savedEmail);
+                setWhatsappPrimary(savedPrimary);
+                setWhatsappSecondary(savedSecondary);
+                if (savedPic) {
+                    setProfilePicDataUrl(savedPic);
+                    setProfilePicName(savedPicName);
+                }
+                setEmergencySavedAt(savedAt);
+                setEmergencySaved(!!(savedEmail && savedPrimary && savedAt));
+            } catch (e) {
+                console.warn('Could not load saved emergency profile:', e);
+            }
+        }, []);
 
         const requestGPS = useCallback(() => {
             if (!navigator.geolocation) {
@@ -131,15 +153,11 @@
                     const { latitude, longitude, accuracy } = pos.coords;
                     const address = await reverseGeocode(latitude, longitude);
                     setDeviceData({
-                        latitude, longitude,
-                        accuracy: Math.round(accuracy),
-                        battery: 100,
+                        latitude, longitude, accuracy: Math.round(accuracy), battery: 100,
                         signalStrength: 'GPS Satellite Lock',
                         lastUpdated: new Date().toLocaleTimeString(),
-                        status: 'ONLINE',
-                        deviceName: 'Browser GPS Tracker',
-                        address,
-                        source: 'gps'
+                        status: 'ONLINE', deviceName: 'Browser GPS Tracker',
+                        address, source: 'gps'
                     });
                     setIsLoading(false);
                     setGpsActive(true);
@@ -165,16 +183,12 @@
             try {
                 const result = await geocodeAddress(searchQuery.trim());
                 setDeviceData({
-                    latitude: result.lat,
-                    longitude: result.lng,
-                    accuracy: null,
-                    battery: 100,
+                    latitude: result.lat, longitude: result.lng, accuracy: null, battery: 100,
                     signalStrength: 'Address Lookup',
                     lastUpdated: new Date().toLocaleTimeString(),
                     status: 'LOCATED',
                     deviceName: result.displayName.split(',')[0] || 'Searched Address',
-                    address: result.displayName,
-                    source: 'search'
+                    address: result.displayName, source: 'search'
                 });
                 setGpsActive(false);
             } catch (err) {
@@ -186,7 +200,7 @@
 
         useEffect(() => { requestGPS(); }, [requestGPS]);
 
-        // ---------------- EMERGENCY HANDLERS ----------------
+        // ---------------- PROFILE PIC HANDLERS ----------------
         const handleProfilePicChange = (e) => {
             const file = e.target.files && e.target.files[0];
             if (!file) {
@@ -226,9 +240,70 @@
             if (fileInputRef.current) fileInputRef.current.value = '';
         };
 
+        // ---------------- SAVE EMERGENCY PROFILE ----------------
+        const saveEmergencyProfile = () => {
+            const email = emergencyEmail.trim();
+            const primary = whatsappPrimary.trim();
+
+            if (!email || !primary) {
+                setEmergencyStatus('❌ Emergency email and primary WhatsApp number are required before saving.');
+                setEmergencyStatusType('error');
+                return;
+            }
+            if (!email.includes('@') || !email.includes('.')) {
+                setEmergencyStatus('❌ Please enter a valid email address.');
+                setEmergencyStatusType('error');
+                return;
+            }
+
+            try {
+                localStorage.setItem(STORAGE_KEYS.email, email);
+                localStorage.setItem(STORAGE_KEYS.waPrimary, primary);
+                localStorage.setItem(STORAGE_KEYS.waSecondary, whatsappSecondary.trim());
+
+                if (profilePicDataUrl) {
+                    // Try to save picture — may fail if quota exceeded (large image)
+                    try {
+                        localStorage.setItem(STORAGE_KEYS.pic, profilePicDataUrl);
+                        localStorage.setItem(STORAGE_KEYS.picName, profilePicName);
+                    } catch (quotaErr) {
+                        console.warn('Profile picture too large for localStorage, saving contacts only:', quotaErr);
+                        setEmergencyStatus('⚠️ Contacts saved, but the picture is too large to store permanently. It will only be used this session.');
+                        setEmergencyStatusType('error');
+                        const now = new Date().toLocaleString();
+                        localStorage.setItem(STORAGE_KEYS.savedAt, now);
+                        setEmergencySavedAt(now);
+                        setEmergencySaved(true);
+                        return;
+                    }
+                } else {
+                    localStorage.removeItem(STORAGE_KEYS.pic);
+                    localStorage.removeItem(STORAGE_KEYS.picName);
+                }
+
+                const now = new Date().toLocaleString();
+                localStorage.setItem(STORAGE_KEYS.savedAt, now);
+                setEmergencySavedAt(now);
+                setEmergencySaved(true);
+                setEmergencyStatus('✅ Emergency profile saved successfully. It will be loaded automatically next time.');
+                setEmergencyStatusType('success');
+            } catch (e) {
+                console.error('Save failed:', e);
+                setEmergencyStatus('❌ Could not save to browser storage. Your browser may be blocking localStorage.');
+                setEmergencyStatusType('error');
+            }
+        };
+
+        // ---------------- TRIGGER EMERGENCY (uses saved or current values) ----------------
         const triggerEmergency = () => {
             const email = emergencyEmail.trim();
             const primary = whatsappPrimary.trim();
+
+            if (!emergencySaved) {
+                setEmergencyStatus('⚠️ Please save your emergency profile first (click "Save Emergency Profile").');
+                setEmergencyStatusType('error');
+                return;
+            }
 
             if (!email || !primary) {
                 setEmergencyStatus('❌ Emergency email and primary WhatsApp number are required.');
@@ -262,12 +337,10 @@
                 `${pictureNote}\n\n` +
                 `Sent from J.A.R.V.I.S. GPS Tracker — Locate Me For Help.`;
 
-            // Email
             const emailSubject = '🚨 EMERGENCY: I need help!';
             const mailtoLink = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(baseMessage)}`;
             window.location.href = mailtoLink;
 
-            // Primary WhatsApp
             const cleanPrimary = primary.replace(/[^0-9]/g, '');
             let primaryWhatsAppOpened = false;
             if (cleanPrimary.length >= 10) {
@@ -280,7 +353,6 @@
                 setEmergencyStatusType('error');
             }
 
-            // Secondary WhatsApp
             const secondary = whatsappSecondary.trim();
             if (secondary) {
                 const cleanSecondary = secondary.replace(/[^0-9]/g, '');
@@ -329,6 +401,9 @@
                         >
                             <Icon name="alert-triangle" className="w-4 h-4" />
                             Locate Me For Help
+                            {emergencySaved && (
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 border border-white/50" title="Emergency profile saved"></span>
+                            )}
                         </button>
                         <a
                             href={googleMapsLink}
@@ -552,6 +627,16 @@
                             </div>
 
                             <div className="p-5 space-y-5">
+                                {/* Saved status banner */}
+                                {emergencySaved && (
+                                    <div className="bg-emerald-900/30 border border-emerald-700/50 rounded-lg p-3 text-xs text-emerald-300 flex items-start gap-2">
+                                        <Icon name="check-circle" className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                        <span>
+                                            Emergency profile saved{emergencySavedAt ? ` on ${emergencySavedAt}` : ''}. You can edit the fields below and re-save anytime.
+                                        </span>
+                                    </div>
+                                )}
+
                                 <p className="text-xs text-slate-400 leading-relaxed">
                                     In an emergency, tap the red button. Your exact GPS position will be sent
                                     by <span className="text-cyan-300 font-semibold">email</span> and via
@@ -664,17 +749,32 @@
                                     </div>
                                 )}
 
+                                {/* SAVE BUTTON */}
+                                <button
+                                    onClick={saveEmergencyProfile}
+                                    className="w-full bg-slate-800 hover:bg-slate-700 border border-cyan-600/50 text-cyan-300 font-semibold text-sm py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
+                                >
+                                    <Icon name="save" className="w-4 h-4" />
+                                    {emergencySaved ? 'Update Saved Emergency Profile' : 'Save Emergency Profile'}
+                                </button>
+
+                                {/* EMERGENCY SEND BUTTON */}
                                 <button
                                     onClick={triggerEmergency}
-                                    className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 emergency-pulse text-white font-bold text-base py-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-red-900/50"
+                                    disabled={!emergencySaved}
+                                    className={`w-full font-bold text-base py-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg ${
+                                        emergencySaved
+                                            ? 'bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 emergency-pulse text-white shadow-red-900/50'
+                                            : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                                    }`}
                                 >
                                     <Icon name="alert-triangle" className="w-6 h-6" />
-                                    SEND EMERGENCY LOCATION NOW
+                                    {emergencySaved ? 'SEND EMERGENCY LOCATION NOW' : 'SAVE PROFILE FIRST TO ENABLE'}
                                 </button>
 
                                 <p className="text-[10px] text-slate-500 text-center leading-relaxed">
-                                    This will open your email app and WhatsApp with a pre-filled emergency message
-                                    containing your exact coordinates. Attach your profile picture manually in the email if needed.
+                                    Your emergency profile is stored securely in your browser's local storage.
+                                    It's automatically loaded next time — no need to re-enter it unless you edit.
                                 </p>
                             </div>
                         </div>
