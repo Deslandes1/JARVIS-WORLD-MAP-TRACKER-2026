@@ -2,13 +2,15 @@
   ============================================================
   FILE: public/index.html
   LOCATION: your-project/public/index.html
-  PURPOSE: J.A.R.V.I.S. GPS Tracker UI (served by Firebase Hosting)
-  FEATURES:
-    - Reads ?lat=...&lng=...&zoom=...&label=... from the URL and
-      centers the map on that exact position with an emergency marker.
-    - Locate Me For Help: sends email (via Firebase) + WhatsApp
-      with a link to your GitHub Pages JARVIS map, so recipients
-      see the exact position when they tap it.
+  PURPOSE: J.A.R.V.I.S. GPS Tracker UI (Firebase Hosting)
+  CHANGES:
+    - Email sending removed entirely.
+    - WhatsApp is the ONLY delivery channel.
+    - Profile photo is uploaded to Firebase (storeEmergencyProfile)
+      which returns an ID (pid).
+    - WhatsApp message contains the JARVIS map link with
+      ?lat=...&lng=...&zoom=...&label=...&pid=<photoId>.
+      The helper's JARVIS app reads pid to display the sender's photo.
   ============================================================
 -->
 <!DOCTYPE html>
@@ -55,15 +57,15 @@
 const { useState, useEffect, useCallback, useRef, memo } = React;
 
 /* ---------------------------------------------------------------
-   FIREBASE CLOUD FUNCTION URL
-   Project: jarvis-global-gps-tracker
+   FIREBASE CLOUD FUNCTION URLS
+   After `firebase deploy --only functions`, paste the two URLs
+   printed by the CLI here.
    --------------------------------------------------------------- */
-const FIREBASE_SEND_URL = 'https://us-central1-jarvis-global-gps-tracker.cloudfunctions.net/sendEmergencyEmail';
+const FIREBASE_STORE_URL = 'https://us-central1-jarvis-global-gps-tracker.cloudfunctions.net/storeEmergencyProfile';
+const FIREBASE_GET_URL   = 'https://us-central1-jarvis-global-gps-tracker.cloudfunctions.net/getEmergencyProfile';
 
 /* ---------------------------------------------------------------
    YOUR GITHUB PAGES JARVIS APP
-   Recipients tapping the link in WhatsApp / email will open this
-   live app and see the exact position on the map.
    --------------------------------------------------------------- */
 const JARVIS_APP_URL = 'https://deslandes1.github.io/JARVIS-WORLD-MAP-TRACKER-2026/';
 
@@ -71,9 +73,9 @@ const JARVIS_APP_URL = 'https://deslandes1.github.io/JARVIS-WORLD-MAP-TRACKER-20
    STORAGE KEYS
 --------------------------------------------------------------- */
 const SK = {
-  email: 'jarvis_em_email',
   wa1: 'jarvis_em_wa1',
   wa2: 'jarvis_em_wa2',
+  name: 'jarvis_em_name',
   picBlob: 'jarvis_em_pic_blob',
   picName: 'jarvis_em_pic_name',
   savedAt: 'jarvis_em_saved_at',
@@ -141,9 +143,7 @@ const Icon = memo(function Icon({ name, className }) {
       slot.appendChild(i);
       window.lucide.createIcons({ attrs: { class: className || '' }, nameAttr: 'data-lucide' });
       slot.dataset.rendered = 'true';
-    } catch (e) {
-      console.warn('icon fail', name, e);
-    }
+    } catch (e) { console.warn('icon fail', name, e); }
   }, [name, className]);
   return <span ref={slotRef} className="lucide-slot"></span>;
 });
@@ -198,44 +198,38 @@ async function reverseGeocode(lat, lng) {
 }
 
 /* ---------------------------------------------------------------
-   Firebase sender
+   Firebase: store photo, return ID
 --------------------------------------------------------------- */
-async function sendEmergencyViaFirebase(payload) {
-  const res = await fetch(FIREBASE_SEND_URL, {
+async function storeProfileOnFirebase({ pictureBase64, pictureName, name, lat, lng }) {
+  const res = await fetch(FIREBASE_STORE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ pictureBase64, pictureName, name, lat, lng }),
   });
   if (!res.ok) {
     const msg = await res.text().catch(() => '');
-    throw new Error(`Firebase send failed (${res.status}): ${msg.slice(0, 200)}`);
+    throw new Error(`Store failed (${res.status}): ${msg.slice(0, 200)}`);
   }
   return res.json();
 }
 
 /* ---------------------------------------------------------------
-   Build the JARVIS app link with exact coordinates in the query
-   string. Recipients tapping it will see the map centered on the
-   exact location (the app reads ?lat=...&lng=...&zoom=...&label=...).
-   --------------------------------------------------------------- */
-function buildJarvisAppLink(lat, lng, label) {
+   Build JARVIS app link with lat/lng/zoom/label and optional pid
+--------------------------------------------------------------- */
+function buildJarvisAppLink(lat, lng, label, photoId) {
   const params = new URLSearchParams({
     lat: lat.toFixed(6),
     lng: lng.toFixed(6),
     zoom: '16',
     label: label || 'Emergency location',
   });
+  if (photoId) params.set('pid', photoId);
   return `${JARVIS_APP_URL}?${params.toString()}`;
 }
 
 /* ---------------------------------------------------------------
-   URL PARAM PARSER
-   Runs as soon as this page loads. If the URL contains
-   ?lat=...&lng=...&zoom=...&label=..., it centers the embedded
-   map on that exact position (instead of the default fallback).
-   Works for both the main app (Firebase Hosting) and any user who
-   opens the link with coordinates attached.
-   --------------------------------------------------------------- */
+   URL param parser
+--------------------------------------------------------------- */
 function readCoordsFromURL() {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -243,18 +237,15 @@ function readCoordsFromURL() {
     const lng = parseFloat(params.get('lng'));
     const zoom = parseInt(params.get('zoom'), 10) || 16;
     const label = params.get('label') || 'Emergency location';
-    if (!isNaN(lat) && !isNaN(lng)) {
-      return { lat, lng, zoom, label };
-    }
-  } catch (e) {
-    console.warn('URL coord parse failed', e);
-  }
+    const pid = params.get('pid') || null;
+    if (!isNaN(lat) && !isNaN(lng)) return { lat, lng, zoom, label, pid };
+  } catch (e) { console.warn('URL coord parse failed', e); }
   return null;
 }
 
-/* ---------------------------------------------------------------
+/* ===============================================================
    MAIN APP
---------------------------------------------------------------- */
+=============================================================== */
 function App() {
   const urlCoords = useRef(readCoordsFromURL());
 
@@ -285,8 +276,12 @@ function App() {
   const [gpsActive, setGpsActive] = useState(false);
   const [sharedLocation, setSharedLocation] = useState(!!urlCoords.current);
 
+  /* Helper-side photo/name fetched when ?pid= is present */
+  const [helperPhoto, setHelperPhoto] = useState(null);
+  const [helperName, setHelperName] = useState('');
+
   const [showEmergencyPanel, setShowEmergencyPanel] = useState(false);
-  const [email, setEmail] = useState('');
+  const [senderName, setSenderName] = useState('');
   const [wa1, setWa1] = useState('');
   const [wa2, setWa2] = useState('');
   const [picBlob, setPicBlob] = useState(null);
@@ -300,17 +295,18 @@ function App() {
   const fileRef = useRef(null);
   const previewUrlRef = useRef(null);
 
+  /* Load saved profile */
   useEffect(() => {
     (async () => {
       try {
-        setEmail(localStorage.getItem(SK.email) || '');
         setWa1(localStorage.getItem(SK.wa1) || '');
         setWa2(localStorage.getItem(SK.wa2) || '');
+        setSenderName(localStorage.getItem(SK.name) || '');
         setPicName(localStorage.getItem(SK.picName) || '');
         const at = localStorage.getItem(SK.savedAt);
         if (at) {
           setSavedAt(at);
-          setSaved(!!(localStorage.getItem(SK.email) && localStorage.getItem(SK.wa1) && at));
+          setSaved(!!(localStorage.getItem(SK.wa1) && at));
         }
         const blob = await idb.get(SK.picBlob).catch(() => null);
         if (blob) {
@@ -324,7 +320,23 @@ function App() {
     return () => { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); };
   }, []);
 
-  /* If shared coords were in the URL, auto-reverse-geocode the address */
+  /* If ?pid= present, fetch the sender's photo from Firebase */
+  useEffect(() => {
+    if (!urlCoords.current || !urlCoords.current.pid) return;
+    (async () => {
+      try {
+        const res = await fetch(`${FIREBASE_GET_URL}?id=${encodeURIComponent(urlCoords.current.pid)}`);
+        if (!res.ok) throw new Error('photo fetch failed');
+        const data = await res.json();
+        if (data.pictureBase64) {
+          setHelperPhoto(`data:${data.pictureContentType || 'image/jpeg'};base64,${data.pictureBase64}`);
+          setHelperName(data.name || '');
+        }
+      } catch (e) { console.warn('helper photo fetch error', e); }
+    })();
+  }, []);
+
+  /* Reverse-geocode shared coords for a friendly address */
   useEffect(() => {
     if (!urlCoords.current) return;
     (async () => {
@@ -358,10 +370,7 @@ function App() {
     );
   }, []);
 
-  /* Only auto-request GPS if no shared coords in URL */
-  useEffect(() => {
-    if (!urlCoords.current) requestGPS();
-  }, [requestGPS]);
+  useEffect(() => { if (!urlCoords.current) requestGPS(); }, [requestGPS]);
 
   const handleAddressSearch = async (e) => {
     e.preventDefault();
@@ -409,13 +418,14 @@ function App() {
   };
 
   const saveProfile = async () => {
-    const e = email.trim(), p = wa1.trim();
-    if (!e || !p) { setStatus('❌ Email and primary WhatsApp are required.'); setStatusType('error'); return; }
-    if (!e.includes('@') || !e.includes('.')) { setStatus('❌ Invalid email.'); setStatusType('error'); return; }
+    const p = wa1.trim();
+    const n = senderName.trim();
+    if (!p) { setStatus('❌ Primary WhatsApp number is required.'); setStatusType('error'); return; }
+    if (!n) { setStatus('❌ Please enter your name so the helper knows who needs help.'); setStatusType('error'); return; }
     try {
-      localStorage.setItem(SK.email, e);
       localStorage.setItem(SK.wa1, p);
       localStorage.setItem(SK.wa2, wa2.trim());
+      localStorage.setItem(SK.name, n);
       if (picBlob) {
         await idb.set(SK.picBlob, picBlob);
         localStorage.setItem(SK.picName, picName);
@@ -433,94 +443,82 @@ function App() {
     }
   };
 
-  /* Send emergency — links recipients to your GitHub Pages JARVIS app */
+  /* Send emergency — WhatsApp only. Uploads photo, gets pid, opens WhatsApp. */
   const sendEmergency = async () => {
     if (!saved) { setStatus('⚠️ Save the profile first.'); setStatusType('error'); return; }
-    const e = email.trim(), p = wa1.trim();
-    if (!e || !p) { setStatus('❌ Email and primary WhatsApp required.'); setStatusType('error'); return; }
+    const p = wa1.trim();
+    const n = senderName.trim();
+    if (!p) { setStatus('❌ Primary WhatsApp number required.'); setStatusType('error'); return; }
     if (deviceData.latitude == null) { setStatus('❌ No location yet.'); setStatusType('error'); return; }
 
-    const lat = deviceData.latitude, lng = deviceData.longitude;
-    const jarvisAppLink = buildJarvisAppLink(lat, lng, deviceData.address || 'Emergency location');
-    const googleMapsLink = `https://www.google.com/maps?q=${lat},${lng}`;
-    const locationText = `Latitude: ${lat.toFixed(6)}, Longitude: ${lng.toFixed(6)}`;
-    const addressText = deviceData.address ? `\nAddress: ${deviceData.address}` : '';
-    const photoLine = picBlob
-      ? `\n📸 Profile photo: ${picName || 'attached'} — attached to the email sent to ${e}.`
-      : `\n📸 No profile photo uploaded.`;
-
-    const text =
-      `🚨 EMERGENCY! I need help.\n\n` +
-      `My exact location:\n${locationText}${addressText}\n\n` +
-      `🗺️ Open my JARVIS GPS Map Tracker to see my exact position:\n${jarvisAppLink}\n\n` +
-      `📍 Google Maps backup:\n${googleMapsLink}\n` +
-      `${photoLine}\n\n` +
-      `Sent from J.A.R.V.I.S. GPS Tracker — Locate Me For Help.`;
-
     setSending(true);
-    setStatus('📡 Sending via Firebase…'); setStatusType('info');
+    setStatus('📤 Uploading your photo and location…'); setStatusType('info');
 
-    let firebaseOk = false;
+    const lat = deviceData.latitude, lng = deviceData.longitude;
+    let photoId = null;
+    let uploadOk = true;
+
     try {
       let pictureBase64 = null;
       if (picBlob) pictureBase64 = await blobToDataURL(picBlob);
-      await sendEmergencyViaFirebase({
-        to: e,
-        subject: '🚨 EMERGENCY: I need help!',
-        text,
+      const result = await storeProfileOnFirebase({
         pictureBase64,
         pictureName: picName || 'profile.jpg',
-        wa1: p,
-        wa2: wa2.trim(),
+        name: n,
         lat, lng,
-        mapLink: jarvisAppLink,
       });
-      firebaseOk = true;
-      setStatus('✅ Emergency email sent via Firebase. Opening WhatsApp chats with the JARVIS app link.');
-      setStatusType('success');
+      photoId = result.id;
     } catch (err) {
-      console.warn('Firebase send failed:', err);
-      setStatus('⚠️ Firebase send failed. Opening mail + WhatsApp as fallback.');
-      setStatusType('error');
-    } finally {
-      setSending(false);
+      console.warn('Photo upload failed:', err);
+      uploadOk = false;
     }
 
-    const mailto = `mailto:${encodeURIComponent(e)}?subject=${encodeURIComponent('🚨 EMERGENCY: I need help!')}&body=${encodeURIComponent(text)}`;
-    try { window.open(mailto, '_blank'); } catch (_) { window.location.href = mailto; }
+    const jarvisAppLink = buildJarvisAppLink(lat, lng, deviceData.address || 'Emergency location', photoId);
+    const googleMapsLink = `https://www.google.com/maps?q=${lat},${lng}`;
+    const locationText = `Latitude: ${lat.toFixed(6)}, Longitude: ${lng.toFixed(6)}`;
+    const addressText = deviceData.address ? `\nAddress: ${deviceData.address}` : '';
+    const photoNote = uploadOk && photoId
+      ? `\n📸 My profile photo is viewable on the JARVIS map link above.`
+      : (picBlob
+          ? `\n📸 Photo could not be uploaded this time — the map will still open at my exact position.`
+          : `\n📸 No profile photo uploaded.`);
+
+    const waMsg =
+      `🚨 EMERGENCY! I need help.\n\n` +
+      `My name: ${n}\n` +
+      `My exact location:\n${locationText}${addressText}\n\n` +
+      `🗺️ Open my JARVIS GPS Map Tracker (with my photo):\n${jarvisAppLink}\n\n` +
+      `📍 Google Maps backup:\n${googleMapsLink}\n` +
+      `${photoNote}`;
+
+    setSending(false);
 
     const clean = p.replace(/[^0-9]/g, '');
-    if (clean.length >= 10) {
-      const waMsg =
-        `🚨 EMERGENCY! I need help.\n\n` +
-        `My exact location:\n${locationText}${addressText}\n\n` +
-        `🗺️ Open my JARVIS GPS Map Tracker to see my exact position:\n${jarvisAppLink}\n\n` +
-        `📍 Google Maps backup:\n${googleMapsLink}\n` +
-        `${photoLine}`;
-      setTimeout(() => window.open(`https://wa.me/${clean}?text=${encodeURIComponent(waMsg)}`, '_blank'), 800);
+    if (clean.length < 10) {
+      setStatus('❌ Primary WhatsApp number looks invalid. Include country code (+509…).');
+      setStatusType('error');
+      return;
     }
+    window.open(`https://wa.me/${clean}?text=${encodeURIComponent(waMsg)}`, '_blank');
 
     const clean2 = wa2.trim().replace(/[^0-9]/g, '');
     if (clean2.length >= 10) {
-      const waMsg =
-        `🚨 EMERGENCY! I need help (secondary contact).\n\n` +
-        `My exact location:\n${locationText}${addressText}\n\n` +
-        `🗺️ Open my JARVIS GPS Map Tracker to see my exact position:\n${jarvisAppLink}\n\n` +
-        `📍 Google Maps backup:\n${googleMapsLink}\n` +
-        `${photoLine}`;
-      setTimeout(() => window.open(`https://wa.me/${clean2}?text=${encodeURIComponent(waMsg)}`, '_blank'), 1500);
+      const waMsg2 = waMsg.replace('EMERGENCY!', 'EMERGENCY (secondary contact)!');
+      setTimeout(() => window.open(`https://wa.me/${clean2}?text=${encodeURIComponent(waMsg2)}`, '_blank'), 1200);
     }
 
-    if (!firebaseOk && clean.length < 10 && clean2.length < 10) {
-      setStatus('❌ No valid WhatsApp number and Firebase failed. Email only.');
-      setStatusType('error');
-    }
+    setStatus(
+      uploadOk && photoId
+        ? '✅ WhatsApp opened. Your photo + exact location will appear to the helper when they tap the JARVIS link.'
+        : '✅ WhatsApp opened with your location. Photo upload was skipped or failed, but the map link still works.'
+    );
+    setStatusType(uploadOk && photoId ? 'success' : 'info');
   };
 
   const bbox = 0.01;
   const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${deviceData.longitude - bbox}%2C${deviceData.latitude - bbox}%2C${deviceData.longitude + bbox}%2C${deviceData.latitude + bbox}&layer=mapnik&marker=${deviceData.latitude}%2C${deviceData.longitude}`;
   const googleMapsLink = `https://www.google.com/maps?q=${deviceData.latitude},${deviceData.longitude}`;
-  const jarvisPreviewLink = buildJarvisAppLink(deviceData.latitude, deviceData.longitude, deviceData.address || 'Preview');
+  const jarvisPreviewLink = buildJarvisAppLink(deviceData.latitude, deviceData.longitude, deviceData.address || 'Preview', null);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-6 font-sans">
@@ -536,7 +534,7 @@ function App() {
           {sharedLocation && (
             <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
               <Icon name="map-pin" className="w-3 h-3" />
-              Showing a shared location received via link
+              Showing a shared emergency location
             </p>
           )}
         </div>
@@ -593,6 +591,22 @@ function App() {
               {deviceData.status}
             </span>
           </div>
+
+          {helperPhoto && (
+            <div className="bg-red-950/40 border border-red-700/50 rounded-lg p-3">
+              <p className="text-[10px] text-red-300 uppercase tracking-wide mb-2 flex items-center gap-1">
+                <Icon name="user" className="w-3 h-3" /> Person in danger
+              </p>
+              <div className="flex items-center gap-3">
+                <img src={helperPhoto} alt="Sender" className="w-16 h-16 rounded-full object-cover border-2 border-red-500" />
+                <div>
+                  <p className="text-sm font-bold text-white">{helperName || 'Emergency contact'}</p>
+                  <p className="text-[10px] text-red-300 mt-0.5">Sent an emergency alert</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-3">
             <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
               <p className="text-xs text-slate-500 uppercase mb-1">Target Location</p>
@@ -626,6 +640,7 @@ function App() {
               <span>Last Update:</span><span className="text-slate-300 font-mono">{deviceData.lastUpdated}</span>
             </div>
           </div>
+
           <div className="mt-4 pt-4 border-t border-slate-800 text-xs text-slate-500 space-y-1">
             <p className="font-semibold text-cyan-400">Built by Gesner Deslandes</p>
             <p>Software Developer</p>
@@ -715,12 +730,24 @@ function App() {
                 </div>
               )}
 
-              <p className="text-xs text-slate-400 leading-relaxed">
-                In an emergency, tap the red button. Your exact GPS position will be sent
-                by <span className="text-cyan-300 font-semibold">email</span> (via Firebase, with picture attached)
-                and via <span className="text-emerald-300 font-semibold">WhatsApp</span> — with a direct link to your
-                JARVIS World Map Tracker showing your exact position.
-              </p>
+              <div className="bg-emerald-950/30 border border-emerald-700/40 rounded-lg p-3 text-xs text-emerald-300 flex items-start gap-2">
+                <Icon name="message-circle" className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>
+                  <strong>WhatsApp only.</strong> Your name, profile photo, and exact location
+                  are sent to your trusted contacts via WhatsApp. The helper can tap the
+                  JARVIS link in the message to see your photo and your location on the map.
+                </span>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                  <Icon name="user" className="w-3.5 h-3.5 text-cyan-400" /> Your Name
+                  <span className="text-[10px] bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full normal-case">required</span>
+                </label>
+                <input type="text" value={senderName} onChange={e => setSenderName(e.target.value)}
+                  placeholder="e.g. Gesner Deslandes"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 transition-colors" />
+              </div>
 
               <div>
                 <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
@@ -743,16 +770,6 @@ function App() {
                     )}
                   </div>
                 </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
-                  <Icon name="mail" className="w-3.5 h-3.5 text-cyan-400" /> Emergency Email
-                  <span className="text-[10px] bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full normal-case">required</span>
-                </label>
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                  placeholder="trusted-contact@example.com"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 transition-colors" />
               </div>
 
               <div>
@@ -781,12 +798,8 @@ function App() {
                   Lat: {deviceData.latitude.toFixed(6)} · Lng: {deviceData.longitude.toFixed(6)}
                 </p>
                 {deviceData.address && <p className="text-[11px] text-slate-400 mt-1 leading-snug">{deviceData.address}</p>}
-                <a
-                  href={jarvisPreviewLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 mt-2 underline"
-                >
+                <a href={jarvisPreviewLink} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 mt-2 underline">
                   <Icon name="external-link" className="w-3 h-3" /> Preview JARVIS app with this location
                 </a>
               </div>
@@ -810,16 +823,15 @@ function App() {
               <button onClick={sendEmergency} disabled={!saved || sending}
                 className={`w-full font-bold text-base py-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg ${
                   saved && !sending
-                    ? 'bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 emergency-pulse text-white shadow-red-900/50'
+                    ? 'bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 emergency-pulse text-white shadow-emerald-900/50'
                     : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'}`}>
-                <Icon name={sending ? 'loader' : 'alert-triangle'} className={`w-6 h-6 ${sending ? 'animate-spin' : ''}`} />
-                {sending ? 'SENDING…' : saved ? 'SEND EMERGENCY LOCATION NOW' : 'SAVE PROFILE FIRST TO ENABLE'}
+                <Icon name={sending ? 'loader' : 'message-circle'} className={`w-6 h-6 ${sending ? 'animate-spin' : ''}`} />
+                {sending ? 'UPLOADING…' : saved ? 'SEND EMERGENCY VIA WHATSAPP' : 'SAVE PROFILE FIRST TO ENABLE'}
               </button>
 
               <p className="text-[10px] text-slate-500 text-center leading-relaxed">
-                Emergency email is delivered automatically via Firebase Cloud Function with the profile photo attached.
-                WhatsApp messages include your exact coordinates and a link to your JARVIS World Map Tracker,
-                which opens on the exact position.
+                WhatsApp is the only delivery channel. Your photo and coordinates are stored
+                for 24 hours so the helper's JARVIS link can display them.
               </p>
             </div>
           </div>
