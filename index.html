@@ -1,792 +1,722 @@
+<!--
+  ============================================================
+  FILE: public/index.html
+  LOCATION: your-project/public/index.html
+  PURPOSE: J.A.R.V.I.S. GPS Tracker UI (served by Firebase Hosting)
+  ============================================================
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>J.A.R.V.I.S. GPS Tracker — Global Locator</title>
-    <meta name="description" content="J.A.R.V.I.S. GPS Tracker — locate anyone anywhere in the world by GPS or street address. Built by Gesner Deslandes, Software Developer." />
-    <meta name="author" content="Gesner Deslandes" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>J.A.R.V.I.S. GPS Tracker — Global Locator</title>
+<meta name="description" content="J.A.R.V.I.S. GPS Tracker — locate anyone anywhere in the world by GPS or street address. Built by Gesner Deslandes, Software Developer." />
+<meta name="author" content="Gesner Deslandes" />
 
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
 
-    <style>
-        body { background-color: #0f172a; margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
-        .dark-map { filter: invert(0.9) hue-rotate(180deg) contrast(1.2); }
-        .brand-bar {
-            background: linear-gradient(90deg, #0e7490 0%, #0891b2 50%, #06b6d4 100%);
-            padding: 6px 16px; text-align: center; font-size: 11px; font-weight: 600;
-            letter-spacing: 1.5px; color: #fff; text-transform: uppercase;
-        }
-        .brand-bar span { color: #fef3c7; }
-        @keyframes emergencyPulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-            50% { box-shadow: 0 0 0 14px rgba(239, 68, 68, 0); }
-        }
-        .emergency-pulse { animation: emergencyPulse 2s infinite; }
-    </style>
+<style>
+  body { background-color: #0f172a; margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
+  .dark-map { filter: invert(0.9) hue-rotate(180deg) contrast(1.2); }
+  .brand-bar {
+    background: linear-gradient(90deg, #0e7490 0%, #0891b2 50%, #06b6d4 100%);
+    padding: 6px 16px; text-align: center; font-size: 11px; font-weight: 600;
+    letter-spacing: 1.5px; color: #fff; text-transform: uppercase;
+  }
+  .brand-bar span { color: #fef3c7; }
+  @keyframes emergencyPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+    50% { box-shadow: 0 0 0 14px rgba(239, 68, 68, 0); }
+  }
+  .emergency-pulse { animation: emergencyPulse 2s infinite; }
+  .lucide-slot { display: inline-flex; align-items: center; justify-content: center; }
+</style>
 </head>
 <body>
 
 <div class="brand-bar">
-    ⚡ Built by <span>Gesner Deslandes</span> · Software Developer · 📞 (509) 47385663 · ✉️ deslandes78@gmail.com
+  ⚡ Built by <span>Gesner Deslandes</span> · Software Developer · 📞 (509) 47385663 · ✉️ deslandes78@gmail.com
 </div>
 
 <div id="root"></div>
 
 <script type="text/babel">
-    const { useState, useEffect, useCallback, useRef, memo } = React;
+const { useState, useEffect, useCallback, useRef, memo } = React;
 
-    // ---------------------------------------------------------------------
-    // localStorage keys
-    // ---------------------------------------------------------------------
-    const STORAGE_KEYS = {
-        email: 'jarvis_emergency_email',
-        waPrimary: 'jarvis_emergency_wa_primary',
-        waSecondary: 'jarvis_emergency_wa_secondary',
-        pic: 'jarvis_emergency_profile_pic',
-        picName: 'jarvis_emergency_profile_pic_name',
-        savedAt: 'jarvis_emergency_saved_at'
-    };
+/* ---------------------------------------------------------------
+   FIREBASE CLOUD FUNCTION URL
+   After you deploy functions/index.js, paste the URL here.
+   Two options (pick ONE):
+     A) Direct:  'https://us-central1-YOUR-PROJECT.cloudfunctions.net/sendEmergencyEmail'
+     B) Rewrite: '/api/sendEmergency'
+   --------------------------------------------------------------- */
+const FIREBASE_SEND_URL = '/api/sendEmergency';
 
-    // ---------------------------------------------------------------------
-    // CRASH-SAFE ICON COMPONENT
-    // ---------------------------------------------------------------------
-    const Icon = memo(({ name, className }) => {
-        const ref = useRef(null);
-        useEffect(() => {
-            if (!window.lucide || !ref.current) return;
-            try {
-                window.lucide.createIcons({
-                    attrs: { class: className || '' },
-                    nameAttr: 'data-lucide',
-                });
-            } catch (e) {
-                console.warn('Lucide icon failed:', name, e);
-            }
-        }, [name, className]);
-        return <i ref={ref} data-lucide={name} className={className}></i>;
+/* ---------------------------------------------------------------
+   STORAGE KEYS
+--------------------------------------------------------------- */
+const SK = {
+  email: 'jarvis_em_email',
+  wa1: 'jarvis_em_wa1',
+  wa2: 'jarvis_em_wa2',
+  picBlob: 'jarvis_em_pic_blob',
+  picName: 'jarvis_em_pic_name',
+  savedAt: 'jarvis_em_saved_at',
+};
+
+/* ---------------------------------------------------------------
+   IndexedDB helper (stores image blobs safely, no quota crash)
+--------------------------------------------------------------- */
+const idb = {
+  db: null,
+  async open() {
+    if (this.db) return this.db;
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('jarvis-emergency', 1);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('profile')) db.createObjectStore('profile');
+      };
+      req.onsuccess = () => { this.db = req.result; resolve(this.db); };
+      req.onerror = () => reject(req.error);
     });
+  },
+  async set(key, val) {
+    const db = await this.open();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('profile', 'readwrite');
+      tx.objectStore('profile').put(val, key);
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  },
+  async get(key) {
+    const db = await this.open();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('profile', 'readonly');
+      const r = tx.objectStore('profile').get(key);
+      r.onsuccess = () => res(r.result || null);
+      r.onerror = () => rej(r.error);
+    });
+  },
+  async del(key) {
+    const db = await this.open();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('profile', 'readwrite');
+      tx.objectStore('profile').delete(key);
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  },
+};
 
-    const geocodeAddress = async (address) => {
-        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`;
-        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-        if (!res.ok) throw new Error('Geocoding failed');
-        const data = await res.json();
-        if (!data || data.length === 0) throw new Error('Address not found');
-        return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), displayName: data[0].display_name };
+/* ---------------------------------------------------------------
+   Crash-safe Icon (Lucide rendered in its own DOM slot)
+--------------------------------------------------------------- */
+const Icon = memo(function Icon({ name, className }) {
+  const slotRef = useRef(null);
+  useEffect(() => {
+    const slot = slotRef.current;
+    if (!slot || !window.lucide) return;
+    if (slot.dataset.rendered === 'true') return;
+    try {
+      const i = document.createElement('i');
+      i.setAttribute('data-lucide', name);
+      if (className) i.setAttribute('class', className);
+      slot.appendChild(i);
+      window.lucide.createIcons({ attrs: { class: className || '' }, nameAttr: 'data-lucide' });
+      slot.dataset.rendered = 'true';
+    } catch (e) {
+      console.warn('icon fail', name, e);
+    }
+  }, [name, className]);
+  return <span ref={slotRef} className="lucide-slot"></span>;
+});
+
+/* ---------------------------------------------------------------
+   Image downscale + conversion helpers
+--------------------------------------------------------------- */
+function downscaleImage(file, max = 512) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('toBlob failed')), 'image/jpeg', 0.85);
     };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Image load failed')); };
+    img.src = url;
+  });
+}
 
-    const reverseGeocode = async (lat, lng) => {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`;
-        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-        if (!res.ok) return null;
-        const data = await res.json();
-        return data.display_name || null;
-    };
+function blobToDataURL(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(blob);
+  });
+}
 
-    function App() {
-        const [deviceData, setDeviceData] = useState({
-            latitude: 18.5392, longitude: -72.3364, accuracy: null, battery: 88,
-            signalStrength: 'Awaiting GPS lock…', lastUpdated: 'Never', status: 'STANDBY',
-            deviceName: 'Browser GPS Tracker', address: null, source: 'default'
+/* ---------------------------------------------------------------
+   Geocoding helpers (OpenStreetMap Nominatim)
+--------------------------------------------------------------- */
+async function geocodeAddress(address) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error('Geocoding failed');
+  const data = await res.json();
+  if (!data.length) throw new Error('Address not found');
+  return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), displayName: data[0].display_name };
+}
+async function reverseGeocode(lat, lng) {
+  const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`, { headers: { Accept: 'application/json' } });
+  if (!res.ok) return null;
+  const d = await res.json();
+  return d.display_name || null;
+}
+
+/* ---------------------------------------------------------------
+   Firebase sender (calls our Cloud Function)
+--------------------------------------------------------------- */
+async function sendEmergencyViaFirebase(payload) {
+  const res = await fetch(FIREBASE_SEND_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '');
+    throw new Error(`Firebase send failed (${res.status}): ${msg.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+/* ---------------------------------------------------------------
+   MAIN APP
+--------------------------------------------------------------- */
+function App() {
+  const [deviceData, setDeviceData] = useState({
+    latitude: 18.5392, longitude: -72.3364, accuracy: null, battery: 88,
+    signalStrength: 'Awaiting GPS lock…', lastUpdated: 'Never', status: 'STANDBY',
+    deviceName: 'Browser GPS Tracker', address: null, source: 'default'
+  });
+  const [isLoading, setIsLoading] = useState(false);
+  const [gpsError, setGpsError] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchError, setSearchError] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [gpsActive, setGpsActive] = useState(false);
+
+  /* Emergency state */
+  const [showEmergencyPanel, setShowEmergencyPanel] = useState(false);
+  const [email, setEmail] = useState('');
+  const [wa1, setWa1] = useState('');
+  const [wa2, setWa2] = useState('');
+  const [picBlob, setPicBlob] = useState(null);
+  const [picPreviewUrl, setPicPreviewUrl] = useState(null);
+  const [picName, setPicName] = useState('');
+  const [status, setStatus] = useState('');
+  const [statusType, setStatusType] = useState('');
+  const [savedAt, setSavedAt] = useState(null);
+  const [saved, setSaved] = useState(false);
+  const [sending, setSending] = useState(false);
+  const fileRef = useRef(null);
+  const previewUrlRef = useRef(null);
+
+  /* Load saved profile on mount */
+  useEffect(() => {
+    (async () => {
+      try {
+        setEmail(localStorage.getItem(SK.email) || '');
+        setWa1(localStorage.getItem(SK.wa1) || '');
+        setWa2(localStorage.getItem(SK.wa2) || '');
+        setPicName(localStorage.getItem(SK.picName) || '');
+        const at = localStorage.getItem(SK.savedAt);
+        if (at) {
+          setSavedAt(at);
+          setSaved(!!(localStorage.getItem(SK.email) && localStorage.getItem(SK.wa1) && at));
+        }
+        const blob = await idb.get(SK.picBlob).catch(() => null);
+        if (blob) {
+          setPicBlob(blob);
+          const u = URL.createObjectURL(blob);
+          previewUrlRef.current = u;
+          setPicPreviewUrl(u);
+        }
+      } catch (e) { console.warn('load profile fail', e); }
+    })();
+    return () => { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current); };
+  }, []);
+
+  /* GPS */
+  const requestGPS = useCallback(() => {
+    if (!navigator.geolocation) { setGpsError('Geolocation unsupported.'); return; }
+    setIsLoading(true); setGpsError(null);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        const address = await reverseGeocode(latitude, longitude).catch(() => null);
+        setDeviceData({
+          latitude, longitude, accuracy: Math.round(accuracy), battery: 100,
+          signalStrength: 'GPS Satellite Lock',
+          lastUpdated: new Date().toLocaleTimeString(),
+          status: 'ONLINE', deviceName: 'Browser GPS Tracker',
+          address, source: 'gps'
         });
+        setIsLoading(false); setGpsActive(true);
+      },
+      (err) => {
+        setGpsError(err.code === 1 ? 'Permission denied. Enable location.' : 'GPS unavailable.');
+        setIsLoading(false);
+        setDeviceData(p => ({ ...p, status: 'OFFLINE', signalStrength: 'No GPS' }));
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }, []);
+  useEffect(() => { requestGPS(); }, [requestGPS]);
 
-        const [isLoading, setIsLoading] = useState(false);
-        const [gpsError, setGpsError] = useState(null);
-        const [searchQuery, setSearchQuery] = useState('');
-        const [searchError, setSearchError] = useState(null);
-        const [isSearching, setIsSearching] = useState(false);
-        const [gpsActive, setGpsActive] = useState(false);
+  const handleAddressSearch = async (e) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    setIsSearching(true); setSearchError(null);
+    try {
+      const r = await geocodeAddress(searchQuery.trim());
+      setDeviceData({
+        latitude: r.lat, longitude: r.lng, accuracy: null, battery: 100,
+        signalStrength: 'Address Lookup', lastUpdated: new Date().toLocaleTimeString(),
+        status: 'LOCATED', deviceName: r.displayName.split(',')[0] || 'Searched Address',
+        address: r.displayName, source: 'search'
+      });
+      setGpsActive(false);
+    } catch { setSearchError('Address not found.'); }
+    finally { setIsSearching(false); }
+  };
 
-        // Emergency state
-        const [showEmergencyPanel, setShowEmergencyPanel] = useState(false);
-        const [emergencyEmail, setEmergencyEmail] = useState('');
-        const [whatsappPrimary, setWhatsappPrimary] = useState('');
-        const [whatsappSecondary, setWhatsappSecondary] = useState('');
-        const [profilePicDataUrl, setProfilePicDataUrl] = useState(null);
-        const [profilePicName, setProfilePicName] = useState('');
-        const [emergencyStatus, setEmergencyStatus] = useState('');
-        const [emergencyStatusType, setEmergencyStatusType] = useState('');
-        const [emergencySavedAt, setEmergencySavedAt] = useState(null);
-        const [emergencySaved, setEmergencySaved] = useState(false); // whether profile is saved
-        const fileInputRef = useRef(null);
+  /* File handling — the blank-screen fix */
+  const handleFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setStatus('Please pick an image file.'); setStatusType('error'); return;
+    }
+    try {
+      const small = await downscaleImage(file, 512);
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      const u = URL.createObjectURL(small);
+      previewUrlRef.current = u;
+      setPicBlob(small);
+      setPicPreviewUrl(u);
+      setPicName(file.name);
+      setStatus(''); setStatusType('');
+    } catch (err) {
+      console.warn(err);
+      setStatus('Could not process that image. Try another.'); setStatusType('error');
+    }
+  };
 
-        // -----------------------------------------------------------------
-        // LOAD SAVED EMERGENCY PROFILE FROM localStorage on first mount
-        // -----------------------------------------------------------------
-        useEffect(() => {
-            try {
-                const savedEmail = localStorage.getItem(STORAGE_KEYS.email) || '';
-                const savedPrimary = localStorage.getItem(STORAGE_KEYS.waPrimary) || '';
-                const savedSecondary = localStorage.getItem(STORAGE_KEYS.waSecondary) || '';
-                const savedPic = localStorage.getItem(STORAGE_KEYS.pic) || null;
-                const savedPicName = localStorage.getItem(STORAGE_KEYS.picName) || '';
-                const savedAt = localStorage.getItem(STORAGE_KEYS.savedAt) || null;
+  const clearPic = async () => {
+    if (previewUrlRef.current) { URL.revokeObjectURL(previewUrlRef.current); previewUrlRef.current = null; }
+    setPicPreviewUrl(null); setPicBlob(null); setPicName('');
+    if (fileRef.current) fileRef.current.value = '';
+    await idb.del(SK.picBlob).catch(() => {});
+  };
 
-                setEmergencyEmail(savedEmail);
-                setWhatsappPrimary(savedPrimary);
-                setWhatsappSecondary(savedSecondary);
-                if (savedPic) {
-                    setProfilePicDataUrl(savedPic);
-                    setProfilePicName(savedPicName);
-                }
-                setEmergencySavedAt(savedAt);
-                setEmergencySaved(!!(savedEmail && savedPrimary && savedAt));
-            } catch (e) {
-                console.warn('Could not load saved emergency profile:', e);
-            }
-        }, []);
+  /* Save profile */
+  const saveProfile = async () => {
+    const e = email.trim(), p = wa1.trim();
+    if (!e || !p) { setStatus('❌ Email and primary WhatsApp are required.'); setStatusType('error'); return; }
+    if (!e.includes('@') || !e.includes('.')) { setStatus('❌ Invalid email.'); setStatusType('error'); return; }
+    try {
+      localStorage.setItem(SK.email, e);
+      localStorage.setItem(SK.wa1, p);
+      localStorage.setItem(SK.wa2, wa2.trim());
+      if (picBlob) {
+        await idb.set(SK.picBlob, picBlob);
+        localStorage.setItem(SK.picName, picName);
+      } else {
+        await idb.del(SK.picBlob).catch(() => {});
+        localStorage.removeItem(SK.picName);
+      }
+      const now = new Date().toLocaleString();
+      localStorage.setItem(SK.savedAt, now);
+      setSavedAt(now); setSaved(true);
+      setStatus('✅ Emergency profile saved. It will auto-load next time.'); setStatusType('success');
+    } catch (err) {
+      console.error(err);
+      setStatus('❌ Could not save. Your browser may be blocking storage.'); setStatusType('error');
+    }
+  };
 
-        const requestGPS = useCallback(() => {
-            if (!navigator.geolocation) {
-                setGpsError('Geolocation is not supported by this browser.');
-                return;
-            }
-            setIsLoading(true);
-            setGpsError(null);
-            navigator.geolocation.getCurrentPosition(
-                async (pos) => {
-                    const { latitude, longitude, accuracy } = pos.coords;
-                    const address = await reverseGeocode(latitude, longitude);
-                    setDeviceData({
-                        latitude, longitude, accuracy: Math.round(accuracy), battery: 100,
-                        signalStrength: 'GPS Satellite Lock',
-                        lastUpdated: new Date().toLocaleTimeString(),
-                        status: 'ONLINE', deviceName: 'Browser GPS Tracker',
-                        address, source: 'gps'
-                    });
-                    setIsLoading(false);
-                    setGpsActive(true);
-                },
-                (err) => {
-                    let msg = 'GPS access denied or unavailable.';
-                    if (err.code === 1) msg = 'Permission denied. Enable location access in your browser settings.';
-                    else if (err.code === 2) msg = 'GPS position unavailable. Check your device signal.';
-                    else if (err.code === 3) msg = 'GPS request timed out. Try again.';
-                    setGpsError(msg);
-                    setIsLoading(false);
-                    setDeviceData(prev => ({ ...prev, status: 'OFFLINE', signalStrength: 'No GPS' }));
-                },
-                { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-            );
-        }, []);
+  /* Send emergency (Firebase primary + mailto/wa.me backup) */
+  const sendEmergency = async () => {
+    if (!saved) { setStatus('⚠️ Save the profile first.'); setStatusType('error'); return; }
+    const e = email.trim(), p = wa1.trim();
+    if (!e || !p) { setStatus('❌ Email and primary WhatsApp required.'); setStatusType('error'); return; }
+    if (deviceData.latitude == null) { setStatus('❌ No location yet.'); setStatusType('error'); return; }
 
-        const handleAddressSearch = async (e) => {
-            e.preventDefault();
-            if (!searchQuery.trim()) return;
-            setIsSearching(true);
-            setSearchError(null);
-            try {
-                const result = await geocodeAddress(searchQuery.trim());
-                setDeviceData({
-                    latitude: result.lat, longitude: result.lng, accuracy: null, battery: 100,
-                    signalStrength: 'Address Lookup',
-                    lastUpdated: new Date().toLocaleTimeString(),
-                    status: 'LOCATED',
-                    deviceName: result.displayName.split(',')[0] || 'Searched Address',
-                    address: result.displayName, source: 'search'
-                });
-                setGpsActive(false);
-            } catch (err) {
-                setSearchError('Address not found. Try a more specific location.');
-            } finally {
-                setIsSearching(false);
-            }
-        };
+    const lat = deviceData.latitude, lng = deviceData.longitude;
+    const mapLink = `https://www.google.com/maps?q=${lat},${lng}`;
+    const locationText = `Latitude: ${lat.toFixed(6)}, Longitude: ${lng.toFixed(6)}`;
+    const addressText = deviceData.address ? `\nAddress: ${deviceData.address}` : '';
+    const pictureNote = picBlob ? `\n📸 Profile picture attached.` : `\n📸 No profile picture.`;
 
-        useEffect(() => { requestGPS(); }, [requestGPS]);
+    const text =
+      `🚨 EMERGENCY! I need help.\n\n` +
+      `My exact location:\n${locationText}${addressText}\n\n` +
+      `Google Maps: ${mapLink}\n${pictureNote}\n\n` +
+      `Sent from J.A.R.V.I.S. GPS Tracker.`;
 
-        // ---------------- PROFILE PIC HANDLERS ----------------
-        const handleProfilePicChange = (e) => {
-            const file = e.target.files && e.target.files[0];
-            if (!file) {
-                setProfilePicDataUrl(null);
-                setProfilePicName('');
-                return;
-            }
-            if (!file.type.startsWith('image/')) {
-                setEmergencyStatus('Please select a valid image file (JPEG, PNG, etc.).');
-                setEmergencyStatusType('error');
-                return;
-            }
-            if (file.size > 5 * 1024 * 1024) {
-                setEmergencyStatus('Image too large. Please use an image under 5MB.');
-                setEmergencyStatusType('error');
-                return;
-            }
-            setProfilePicName(file.name);
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-                setProfilePicDataUrl(ev.target.result);
-                setEmergencyStatus('');
-                setEmergencyStatusType('');
-            };
-            reader.onerror = () => {
-                setEmergencyStatus('Could not read the image. Try another file.');
-                setEmergencyStatusType('error');
-            };
-            reader.readAsDataURL(file);
-        };
+    setSending(true);
+    setStatus('📡 Sending via Firebase…'); setStatusType('info');
 
-        const clearProfilePic = () => {
-            setProfilePicDataUrl(null);
-            setProfilePicName('');
-            setEmergencyStatus('');
-            setEmergencyStatusType('');
-            if (fileInputRef.current) fileInputRef.current.value = '';
-        };
-
-        // ---------------- SAVE EMERGENCY PROFILE ----------------
-        const saveEmergencyProfile = () => {
-            const email = emergencyEmail.trim();
-            const primary = whatsappPrimary.trim();
-
-            if (!email || !primary) {
-                setEmergencyStatus('❌ Emergency email and primary WhatsApp number are required before saving.');
-                setEmergencyStatusType('error');
-                return;
-            }
-            if (!email.includes('@') || !email.includes('.')) {
-                setEmergencyStatus('❌ Please enter a valid email address.');
-                setEmergencyStatusType('error');
-                return;
-            }
-
-            try {
-                localStorage.setItem(STORAGE_KEYS.email, email);
-                localStorage.setItem(STORAGE_KEYS.waPrimary, primary);
-                localStorage.setItem(STORAGE_KEYS.waSecondary, whatsappSecondary.trim());
-
-                if (profilePicDataUrl) {
-                    // Try to save picture — may fail if quota exceeded (large image)
-                    try {
-                        localStorage.setItem(STORAGE_KEYS.pic, profilePicDataUrl);
-                        localStorage.setItem(STORAGE_KEYS.picName, profilePicName);
-                    } catch (quotaErr) {
-                        console.warn('Profile picture too large for localStorage, saving contacts only:', quotaErr);
-                        setEmergencyStatus('⚠️ Contacts saved, but the picture is too large to store permanently. It will only be used this session.');
-                        setEmergencyStatusType('error');
-                        const now = new Date().toLocaleString();
-                        localStorage.setItem(STORAGE_KEYS.savedAt, now);
-                        setEmergencySavedAt(now);
-                        setEmergencySaved(true);
-                        return;
-                    }
-                } else {
-                    localStorage.removeItem(STORAGE_KEYS.pic);
-                    localStorage.removeItem(STORAGE_KEYS.picName);
-                }
-
-                const now = new Date().toLocaleString();
-                localStorage.setItem(STORAGE_KEYS.savedAt, now);
-                setEmergencySavedAt(now);
-                setEmergencySaved(true);
-                setEmergencyStatus('✅ Emergency profile saved successfully. It will be loaded automatically next time.');
-                setEmergencyStatusType('success');
-            } catch (e) {
-                console.error('Save failed:', e);
-                setEmergencyStatus('❌ Could not save to browser storage. Your browser may be blocking localStorage.');
-                setEmergencyStatusType('error');
-            }
-        };
-
-        // ---------------- TRIGGER EMERGENCY (uses saved or current values) ----------------
-        const triggerEmergency = () => {
-            const email = emergencyEmail.trim();
-            const primary = whatsappPrimary.trim();
-
-            if (!emergencySaved) {
-                setEmergencyStatus('⚠️ Please save your emergency profile first (click "Save Emergency Profile").');
-                setEmergencyStatusType('error');
-                return;
-            }
-
-            if (!email || !primary) {
-                setEmergencyStatus('❌ Emergency email and primary WhatsApp number are required.');
-                setEmergencyStatusType('error');
-                return;
-            }
-            if (!email.includes('@') || !email.includes('.')) {
-                setEmergencyStatus('❌ Please enter a valid email address.');
-                setEmergencyStatusType('error');
-                return;
-            }
-            if (deviceData.latitude === null || deviceData.longitude === null) {
-                setEmergencyStatus('❌ Location not available yet. Please enable GPS or search an address.');
-                setEmergencyStatusType('error');
-                return;
-            }
-
-            const lat = deviceData.latitude;
-            const lng = deviceData.longitude;
-            const mapLink = `https://www.google.com/maps?q=${lat},${lng}`;
-            const locationText = `Latitude: ${lat.toFixed(6)}, Longitude: ${lng.toFixed(6)}`;
-            const addressText = deviceData.address ? `\nAddress: ${deviceData.address}` : '';
-            const pictureNote = profilePicDataUrl
-                ? `\n📸 Profile picture: ${profilePicName} (please attach from device)`
-                : `\n📸 No profile picture uploaded.`;
-
-            const baseMessage =
-                `🚨 EMERGENCY! I need help.\n\n` +
-                `My exact location:\n${locationText}${addressText}\n\n` +
-                `Google Maps: ${mapLink}\n` +
-                `${pictureNote}\n\n` +
-                `Sent from J.A.R.V.I.S. GPS Tracker — Locate Me For Help.`;
-
-            const emailSubject = '🚨 EMERGENCY: I need help!';
-            const mailtoLink = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(baseMessage)}`;
-            window.location.href = mailtoLink;
-
-            const cleanPrimary = primary.replace(/[^0-9]/g, '');
-            let primaryWhatsAppOpened = false;
-            if (cleanPrimary.length >= 10) {
-                const waMsgPrimary = `🚨 EMERGENCY! I need help.\n\nMy exact location:\n${locationText}${addressText}\n\nMap: ${mapLink}\n${pictureNote}`;
-                const waUrlPrimary = `https://wa.me/${cleanPrimary}?text=${encodeURIComponent(waMsgPrimary)}`;
-                setTimeout(() => { window.open(waUrlPrimary, '_blank'); }, 600);
-                primaryWhatsAppOpened = true;
-            } else {
-                setEmergencyStatus('⚠️ Primary WhatsApp number seems invalid (include country code, e.g. +509...). Email was still opened.');
-                setEmergencyStatusType('error');
-            }
-
-            const secondary = whatsappSecondary.trim();
-            if (secondary) {
-                const cleanSecondary = secondary.replace(/[^0-9]/g, '');
-                if (cleanSecondary.length >= 10) {
-                    const waMsgSecondary = `🚨 EMERGENCY! I need help (secondary contact).\n\nMy exact location:\n${locationText}${addressText}\n\nMap: ${mapLink}\n${pictureNote}`;
-                    const waUrlSecondary = `https://wa.me/${cleanSecondary}?text=${encodeURIComponent(waMsgSecondary)}`;
-                    setTimeout(() => { window.open(waUrlSecondary, '_blank'); }, 1200);
-                }
-            }
-
-            if (primaryWhatsAppOpened) {
-                setEmergencyStatus('✅ Emergency alerts dispatched. Email client opened. WhatsApp chat(s) opening with your location.');
-                setEmergencyStatusType('success');
-            }
-        };
-
-        const bboxDelta = 0.01;
-        const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${deviceData.longitude - bboxDelta}%2C${deviceData.latitude - bboxDelta}%2C${deviceData.longitude + bboxDelta}%2C${deviceData.latitude + bboxDelta}&layer=mapnik&marker=${deviceData.latitude}%2C${deviceData.longitude}`;
-        const googleMapsLink = `https://www.google.com/maps?q=${deviceData.latitude},${deviceData.longitude}`;
-
-        return (
-            <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-6 font-sans">
-                <header className="mb-6 border-b border-slate-800 pb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <div>
-                        <h1 className="text-xl md:text-2xl font-bold text-cyan-400 tracking-wider flex items-center gap-3">
-                            <Icon name="shield" className="w-7 h-7" />
-                            J.A.R.V.I.S. GLOBAL GPS TRACKER
-                        </h1>
-                        <p className="text-xs md:text-sm text-slate-500 mt-1 flex items-center gap-2">
-                            <Icon name="globe" className="w-4 h-4" />
-                            Locate anyone, anywhere — by GPS or street address
-                        </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                        <button
-                            onClick={requestGPS}
-                            disabled={isLoading}
-                            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                        >
-                            <Icon name="crosshair" className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                            {isLoading ? 'Locating…' : 'Locate Me (GPS)'}
-                        </button>
-                        <button
-                            onClick={() => setShowEmergencyPanel(true)}
-                            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 emergency-pulse px-4 py-2 rounded-lg text-sm font-bold transition-colors text-white"
-                        >
-                            <Icon name="alert-triangle" className="w-4 h-4" />
-                            Locate Me For Help
-                            {emergencySaved && (
-                                <span className="w-2 h-2 rounded-full bg-emerald-400 border border-white/50" title="Emergency profile saved"></span>
-                            )}
-                        </button>
-                        <a
-                            href={googleMapsLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
-                        >
-                            <Icon name="external-link" className="w-4 h-4" />
-                            Open in Maps
-                        </a>
-                    </div>
-                </header>
-
-                {(gpsError || searchError) && (
-                    <div className="mb-4 bg-red-900/30 border border-red-700/50 rounded-lg p-3 text-sm text-red-300 flex items-start gap-2">
-                        <Icon name="alert-triangle" className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                        <span>{gpsError || searchError}</span>
-                    </div>
-                )}
-
-                <form onSubmit={handleAddressSearch} className="mb-6">
-                    <div className="flex flex-col sm:flex-row gap-2">
-                        <div className="relative flex-1">
-                            <Icon name="search" className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                            <input
-                                type="text"
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                placeholder="Enter any street address, city, landmark, or ZIP code — anywhere in the world"
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
-                            />
-                        </div>
-                        <button
-                            type="submit"
-                            disabled={isSearching}
-                            className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-6 py-3 rounded-lg text-sm font-semibold transition-colors"
-                        >
-                            <Icon name={isSearching ? 'loader' : 'map-pin'} className={`w-4 h-4 ${isSearching ? 'animate-spin' : ''}`} />
-                            {isSearching ? 'Searching…' : 'Find Address'}
-                        </button>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-2 flex items-center gap-1">
-                        <Icon name="info" className="w-3 h-3" />
-                        Powered by OpenStreetMap Nominatim — free global geocoding
-                    </p>
-                </form>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-5 shadow-xl">
-                        <div className="flex justify-between items-center">
-                            <h2 className="text-sm font-semibold tracking-wide text-slate-300 uppercase flex items-center gap-2">
-                                <Icon name="cpu" className="w-4 h-4 text-cyan-400" />
-                                Diagnostics
-                            </h2>
-                            <span className={`px-2.5 py-0.5 text-xs font-semibold rounded-full flex items-center gap-1 ${
-                                deviceData.status === 'ONLINE' || deviceData.status === 'LOCATED'
-                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                            }`}>
-                                <span className={`w-2 h-2 rounded-full ${
-                                    deviceData.status === 'ONLINE' || deviceData.status === 'LOCATED'
-                                        ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                                }`}></span>
-                                {deviceData.status}
-                            </span>
-                        </div>
-
-                        <div className="space-y-3">
-                            <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
-                                <p className="text-xs text-slate-500 uppercase mb-1">Target Location</p>
-                                <p className="text-sm font-medium text-slate-200">{deviceData.deviceName}</p>
-                                {deviceData.address && (
-                                    <p className="text-xs text-slate-400 mt-1 leading-snug">{deviceData.address}</p>
-                                )}
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
-                                    <div className="flex items-center space-x-1.5 text-slate-400 mb-1">
-                                        <Icon name="battery" className="w-3.5 h-3.5 text-emerald-400" />
-                                        <span className="text-xs">Battery</span>
-                                    </div>
-                                    <p className="text-base font-bold text-slate-100">{deviceData.battery}%</p>
-                                </div>
-                                <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
-                                    <div className="flex items-center space-x-1.5 text-slate-400 mb-1">
-                                        <Icon name="signal" className="w-3.5 h-3.5 text-cyan-400" />
-                                        <span className="text-xs">Source</span>
-                                    </div>
-                                    <p className="text-xs font-semibold text-slate-200 mt-1">{deviceData.signalStrength}</p>
-                                </div>
-                            </div>
-
-                            <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800 space-y-2">
-                                <div className="flex items-center space-x-1.5 text-slate-400">
-                                    <Icon name="map-pin" className="w-3.5 h-3.5 text-red-400" />
-                                    <span className="text-xs">GPS Coordinates</span>
-                                </div>
-                                <div className="font-mono text-sm text-cyan-300 leading-relaxed">
-                                    Lat: {deviceData.latitude.toFixed(5)}<br />
-                                    Lng: {deviceData.longitude.toFixed(5)}
-                                </div>
-                                {deviceData.accuracy && (
-                                    <p className="text-xs text-slate-500">Accuracy: ±{deviceData.accuracy} meters</p>
-                                )}
-                            </div>
-
-                            <div className="flex justify-between items-center text-xs text-slate-500 pt-2 border-t border-slate-800">
-                                <span>Last Update:</span>
-                                <span className="text-slate-300 font-mono">{deviceData.lastUpdated}</span>
-                            </div>
-                        </div>
-
-                        <div className="mt-4 pt-4 border-t border-slate-800 text-xs text-slate-500 space-y-1">
-                            <p className="font-semibold text-cyan-400">Built by Gesner Deslandes</p>
-                            <p>Software Developer</p>
-                            <p>📞 (509) 47385663</p>
-                            <p>✉️ deslandes78@gmail.com</p>
-                            <a
-                                href="https://deslandes1.github.io/G-COMMUNICATION-2026/"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 mt-1"
-                            >
-                                <Icon name="link" className="w-3 h-3" />
-                                G Jarvis Communication Portal
-                            </a>
-                        </div>
-                    </div>
-
-                    <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col h-[500px] md:h-[600px] shadow-xl">
-                        <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex justify-between items-center">
-                            <span className="text-xs font-semibold text-slate-300 tracking-wider uppercase flex items-center gap-2">
-                                <Icon name="radio" className="w-4 h-4 text-cyan-400 animate-pulse" />
-                                Real-time Geolocation
-                            </span>
-                            <span className="text-xs text-slate-500">
-                                {deviceData.source === 'gps' ? 'Live GPS' :
-                                 deviceData.source === 'search' ? 'Address Match' : 'Default View'}
-                            </span>
-                        </div>
-
-                        <div className="flex-1 relative bg-slate-950">
-                            <iframe
-                                title="GPS Tracker Map"
-                                className="w-full h-full dark-map border-0"
-                                src={mapSrc}
-                                loading="lazy"
-                            />
-
-                            <div className="absolute top-4 left-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl text-xs space-y-1 max-w-[260px]">
-                                <div className="font-bold text-cyan-400 flex items-center gap-1.5">
-                                    <span className={`w-2 h-2 rounded-full ${
-                                        deviceData.source === 'gps' ? 'bg-emerald-400 animate-ping' : 'bg-cyan-400'
-                                    }`} />
-                                    {deviceData.source === 'gps' ? 'Live GPS Active' :
-                                     deviceData.source === 'search' ? 'Address Located' : 'Default View'}
-                                </div>
-                                <div className="text-slate-300 text-[11px] leading-snug">{deviceData.deviceName}</div>
-                            </div>
-
-                            {!gpsActive && deviceData.source !== 'search' && (
-                                <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
-                                    <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-sm text-center">
-                                        <Icon name="map-pin" className="w-12 h-12 text-cyan-400 mx-auto mb-3" />
-                                        <h3 className="text-base font-bold text-slate-100 mb-2">Enable GPS to Locate You</h3>
-                                        <p className="text-xs text-slate-400 mb-4">
-                                            Your browser will ask for location permission. Allow it to see your exact position, or search by address above.
-                                        </p>
-                                        <button
-                                            onClick={requestGPS}
-                                            disabled={isLoading}
-                                            className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2"
-                                        >
-                                            <Icon name={isLoading ? 'loader' : 'crosshair'} className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-                                            {isLoading ? 'Requesting…' : 'Enable GPS'}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                <footer className="mt-8 border-t border-slate-800 pt-4 flex flex-col md:flex-row justify-between items-center gap-3 text-xs text-slate-500">
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 justify-center md:justify-start">
-                        <span className="font-semibold text-cyan-400">Gesner Deslandes</span>
-                        <span>·</span>
-                        <span>Software Developer</span>
-                        <span>·</span>
-                        <span>📞 (509) 47385663</span>
-                        <span>·</span>
-                        <span>✉️ deslandes78@gmail.com</span>
-                    </div>
-                    <div className="flex gap-3">
-                        <a href="https://deslandes1.github.io/G-COMMUNICATION-2026/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">
-                            G Jarvis Portal
-                        </a>
-                        <a href="https://deslandes1.github.io/GlobalInternet.py-Website-Static-Site-Conversion-2026/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">
-                            Website
-                        </a>
-                    </div>
-                </footer>
-
-                {/* ==================== EMERGENCY MODAL ==================== */}
-                {showEmergencyPanel && (
-                    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                        <div className="bg-slate-900 border border-red-700/50 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto shadow-2xl">
-                            <div className="bg-gradient-to-r from-red-700 to-red-900 px-5 py-4 rounded-t-2xl flex justify-between items-center sticky top-0 z-10">
-                                <h2 className="text-white font-bold text-lg flex items-center gap-2">
-                                    <Icon name="alert-triangle" className="w-5 h-5" />
-                                    Locate Me For Help
-                                </h2>
-                                <button
-                                    onClick={() => setShowEmergencyPanel(false)}
-                                    className="text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full p-1.5 transition-colors"
-                                    aria-label="Close"
-                                >
-                                    <Icon name="x" className="w-4 h-4" />
-                                </button>
-                            </div>
-
-                            <div className="p-5 space-y-5">
-                                {/* Saved status banner */}
-                                {emergencySaved && (
-                                    <div className="bg-emerald-900/30 border border-emerald-700/50 rounded-lg p-3 text-xs text-emerald-300 flex items-start gap-2">
-                                        <Icon name="check-circle" className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                                        <span>
-                                            Emergency profile saved{emergencySavedAt ? ` on ${emergencySavedAt}` : ''}. You can edit the fields below and re-save anytime.
-                                        </span>
-                                    </div>
-                                )}
-
-                                <p className="text-xs text-slate-400 leading-relaxed">
-                                    In an emergency, tap the red button. Your exact GPS position will be sent
-                                    by <span className="text-cyan-300 font-semibold">email</span> and via
-                                    <span className="text-emerald-300 font-semibold"> WhatsApp</span> to your trusted contacts.
-                                </p>
-
-                                {/* Profile picture */}
-                                <div>
-                                    <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
-                                        <Icon name="image" className="w-3.5 h-3.5 text-cyan-400" />
-                                        Profile Picture
-                                    </label>
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-16 h-16 rounded-full bg-slate-800 border-2 border-slate-700 flex items-center justify-center overflow-hidden flex-shrink-0">
-                                            {profilePicDataUrl ? (
-                                                <img src={profilePicDataUrl} alt="Profile preview" className="w-full h-full object-cover" />
-                                            ) : (
-                                                <Icon name="user" className="w-7 h-7 text-slate-600" />
-                                            )}
-                                        </div>
-                                        <div className="flex-1 space-y-2">
-                                            <input
-                                                ref={fileInputRef}
-                                                type="file"
-                                                accept="image/*"
-                                                onChange={handleProfilePicChange}
-                                                className="block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-cyan-600 file:text-white hover:file:bg-cyan-500 file:cursor-pointer cursor-pointer bg-slate-950 border border-slate-700 rounded-lg"
-                                            />
-                                            {profilePicName && (
-                                                <div className="flex items-center justify-between text-xs">
-                                                    <span className="text-slate-400 truncate">{profilePicName}</span>
-                                                    <button onClick={clearProfilePic} className="text-red-400 hover:text-red-300 font-semibold ml-2 flex-shrink-0">
-                                                        Remove
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Emergency email */}
-                                <div>
-                                    <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
-                                        <Icon name="mail" className="w-3.5 h-3.5 text-cyan-400" />
-                                        Emergency Email
-                                        <span className="text-[10px] bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full normal-case">required</span>
-                                    </label>
-                                    <input
-                                        type="email"
-                                        value={emergencyEmail}
-                                        onChange={(e) => setEmergencyEmail(e.target.value)}
-                                        placeholder="trusted-contact@example.com"
-                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 transition-colors"
-                                    />
-                                </div>
-
-                                {/* WhatsApp primary */}
-                                <div>
-                                    <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
-                                        <Icon name="message-circle" className="w-3.5 h-3.5 text-emerald-400" />
-                                        WhatsApp Number (Primary)
-                                        <span className="text-[10px] bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full normal-case">required</span>
-                                    </label>
-                                    <input
-                                        type="tel"
-                                        value={whatsappPrimary}
-                                        onChange={(e) => setWhatsappPrimary(e.target.value)}
-                                        placeholder="+509 4738 5663"
-                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors"
-                                    />
-                                </div>
-
-                                {/* WhatsApp secondary */}
-                                <div>
-                                    <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
-                                        <Icon name="message-circle" className="w-3.5 h-3.5 text-slate-500" />
-                                        WhatsApp Number (Secondary)
-                                        <span className="text-[10px] bg-slate-700/50 text-slate-400 px-2 py-0.5 rounded-full normal-case">optional</span>
-                                    </label>
-                                    <input
-                                        type="tel"
-                                        value={whatsappSecondary}
-                                        onChange={(e) => setWhatsappSecondary(e.target.value)}
-                                        placeholder="+1 234 567 8900"
-                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors"
-                                    />
-                                </div>
-
-                                {/* Location preview */}
-                                <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
-                                    <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Location to send</p>
-                                    <p className="font-mono text-xs text-cyan-300">
-                                        Lat: {deviceData.latitude.toFixed(6)} · Lng: {deviceData.longitude.toFixed(6)}
-                                    </p>
-                                    {deviceData.address && (
-                                        <p className="text-[11px] text-slate-400 mt-1 leading-snug">{deviceData.address}</p>
-                                    )}
-                                </div>
-
-                                {emergencyStatus && (
-                                    <div className={`rounded-lg p-3 text-xs flex items-start gap-2 ${
-                                        emergencyStatusType === 'success'
-                                            ? 'bg-emerald-900/30 border border-emerald-700/50 text-emerald-300'
-                                            : emergencyStatusType === 'error'
-                                            ? 'bg-red-900/30 border border-red-700/50 text-red-300'
-                                            : 'bg-slate-800/50 border border-slate-700 text-slate-300'
-                                    }`}>
-                                        <Icon name={emergencyStatusType === 'success' ? 'check-circle' : 'alert-triangle'} className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                                        <span>{emergencyStatus}</span>
-                                    </div>
-                                )}
-
-                                {/* SAVE BUTTON */}
-                                <button
-                                    onClick={saveEmergencyProfile}
-                                    className="w-full bg-slate-800 hover:bg-slate-700 border border-cyan-600/50 text-cyan-300 font-semibold text-sm py-3 rounded-xl flex items-center justify-center gap-2 transition-colors"
-                                >
-                                    <Icon name="save" className="w-4 h-4" />
-                                    {emergencySaved ? 'Update Saved Emergency Profile' : 'Save Emergency Profile'}
-                                </button>
-
-                                {/* EMERGENCY SEND BUTTON */}
-                                <button
-                                    onClick={triggerEmergency}
-                                    disabled={!emergencySaved}
-                                    className={`w-full font-bold text-base py-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg ${
-                                        emergencySaved
-                                            ? 'bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 emergency-pulse text-white shadow-red-900/50'
-                                            : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                                    }`}
-                                >
-                                    <Icon name="alert-triangle" className="w-6 h-6" />
-                                    {emergencySaved ? 'SEND EMERGENCY LOCATION NOW' : 'SAVE PROFILE FIRST TO ENABLE'}
-                                </button>
-
-                                <p className="text-[10px] text-slate-500 text-center leading-relaxed">
-                                    Your emergency profile is stored securely in your browser's local storage.
-                                    It's automatically loaded next time — no need to re-enter it unless you edit.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
+    let firebaseOk = false;
+    try {
+      let pictureBase64 = null;
+      if (picBlob) pictureBase64 = await blobToDataURL(picBlob);
+      await sendEmergencyViaFirebase({
+        to: e,
+        subject: '🚨 EMERGENCY: I need help!',
+        text,
+        pictureBase64,
+        wa1: p,
+        wa2: wa2.trim(),
+        lat, lng,
+      });
+      firebaseOk = true;
+      setStatus('✅ Emergency email sent via Firebase. Opening WhatsApp chats as backup.');
+      setStatusType('success');
+    } catch (err) {
+      console.warn('Firebase send failed:', err);
+      setStatus('⚠️ Firebase send failed. Opening mail + WhatsApp as fallback.');
+      setStatusType('error');
+    } finally {
+      setSending(false);
     }
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-</script>
+    /* Fallback / backup links */
+    const mailto = `mailto:${encodeURIComponent(e)}?subject=${encodeURIComponent('🚨 EMERGENCY: I need help!')}&body=${encodeURIComponent(text)}`;
+    try { window.open(mailto, '_blank'); } catch (_) { window.location.href = mailto; }
 
+    const clean = p.replace(/[^0-9]/g, '');
+    if (clean.length >= 10) {
+      const waMsg = `🚨 EMERGENCY! I need help.\n\nMy exact location:\n${locationText}${addressText}\n\nMap: ${mapLink}\n${pictureNote}`;
+      setTimeout(() => window.open(`https://wa.me/${clean}?text=${encodeURIComponent(waMsg)}`, '_blank'), 800);
+    }
+    const clean2 = wa2.trim().replace(/[^0-9]/g, '');
+    if (clean2.length >= 10) {
+      const waMsg = `🚨 EMERGENCY! I need help (secondary).\n\n${locationText}${addressText}\n\nMap: ${mapLink}\n${pictureNote}`;
+      setTimeout(() => window.open(`https://wa.me/${clean2}?text=${encodeURIComponent(waMsg)}`, '_blank'), 1500);
+    }
+
+    if (!firebaseOk && clean.length < 10 && clean2.length < 10) {
+      setStatus('❌ No valid WhatsApp number and Firebase failed. Email only.');
+      setStatusType('error');
+    }
+  };
+
+  const bbox = 0.01;
+  const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${deviceData.longitude - bbox}%2C${deviceData.latitude - bbox}%2C${deviceData.longitude + bbox}%2C${deviceData.latitude + bbox}&layer=mapnik&marker=${deviceData.latitude}%2C${deviceData.longitude}`;
+  const googleMapsLink = `https://www.google.com/maps?q=${deviceData.latitude},${deviceData.longitude}`;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-6 font-sans">
+      <header className="mb-6 border-b border-slate-800 pb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-xl md:text-2xl font-bold text-cyan-400 tracking-wider flex items-center gap-3">
+            <Icon name="shield" className="w-7 h-7" />
+            J.A.R.V.I.S. GLOBAL GPS TRACKER
+          </h1>
+          <p className="text-xs md:text-sm text-slate-500 mt-1 flex items-center gap-2">
+            <Icon name="globe" className="w-4 h-4" /> Locate anyone, anywhere — by GPS or street address
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 w-full md:w-auto">
+          <button onClick={requestGPS} disabled={isLoading}
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+            <Icon name="crosshair" className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            {isLoading ? 'Locating…' : 'Locate Me (GPS)'}
+          </button>
+          <button onClick={() => setShowEmergencyPanel(true)}
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 emergency-pulse px-4 py-2 rounded-lg text-sm font-bold transition-colors text-white">
+            <Icon name="alert-triangle" className="w-4 h-4" />
+            Locate Me For Help
+            {saved && <span className="w-2 h-2 rounded-full bg-emerald-400 border border-white/50" title="Profile saved" />}
+          </button>
+          <a href={googleMapsLink} target="_blank" rel="noopener noreferrer"
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition-colors">
+            <Icon name="external-link" className="w-4 h-4" /> Open in Maps
+          </a>
+        </div>
+      </header>
+
+      {(gpsError || searchError) && (
+        <div className="mb-4 bg-red-900/30 border border-red-700/50 rounded-lg p-3 text-sm text-red-300 flex items-start gap-2">
+          <Icon name="alert-triangle" className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <span>{gpsError || searchError}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleAddressSearch} className="mb-6">
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
+            <Icon name="search" className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Enter any street address, city, landmark, or ZIP code — anywhere in the world"
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors" />
+          </div>
+          <button type="submit" disabled={isSearching}
+            className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-6 py-3 rounded-lg text-sm font-semibold transition-colors">
+            <Icon name={isSearching ? 'loader' : 'map-pin'} className={`w-4 h-4 ${isSearching ? 'animate-spin' : ''}`} />
+            {isSearching ? 'Searching…' : 'Find Address'}
+          </button>
+        </div>
+      </form>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-5 shadow-xl">
+          <div className="flex justify-between items-center">
+            <h2 className="text-sm font-semibold tracking-wide text-slate-300 uppercase flex items-center gap-2">
+              <Icon name="cpu" className="w-4 h-4 text-cyan-400" /> Diagnostics
+            </h2>
+            <span className={`px-2.5 py-0.5 text-xs font-semibold rounded-full flex items-center gap-1 ${deviceData.status === 'ONLINE' || deviceData.status === 'LOCATED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+              <span className={`w-2 h-2 rounded-full ${deviceData.status === 'ONLINE' || deviceData.status === 'LOCATED' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+              {deviceData.status}
+            </span>
+          </div>
+          <div className="space-y-3">
+            <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+              <p className="text-xs text-slate-500 uppercase mb-1">Target Location</p>
+              <p className="text-sm font-medium text-slate-200">{deviceData.deviceName}</p>
+              {deviceData.address && <p className="text-xs text-slate-400 mt-1 leading-snug">{deviceData.address}</p>}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                <div className="flex items-center space-x-1.5 text-slate-400 mb-1">
+                  <Icon name="battery" className="w-3.5 h-3.5 text-emerald-400" /><span className="text-xs">Battery</span>
+                </div>
+                <p className="text-base font-bold text-slate-100">{deviceData.battery}%</p>
+              </div>
+              <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                <div className="flex items-center space-x-1.5 text-slate-400 mb-1">
+                  <Icon name="signal" className="w-3.5 h-3.5 text-cyan-400" /><span className="text-xs">Source</span>
+                </div>
+                <p className="text-xs font-semibold text-slate-200 mt-1">{deviceData.signalStrength}</p>
+              </div>
+            </div>
+            <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800 space-y-2">
+              <div className="flex items-center space-x-1.5 text-slate-400">
+                <Icon name="map-pin" className="w-3.5 h-3.5 text-red-400" /><span className="text-xs">GPS Coordinates</span>
+              </div>
+              <div className="font-mono text-sm text-cyan-300 leading-relaxed">
+                Lat: {deviceData.latitude.toFixed(5)}<br />Lng: {deviceData.longitude.toFixed(5)}
+              </div>
+              {deviceData.accuracy && <p className="text-xs text-slate-500">Accuracy: ±{deviceData.accuracy} m</p>}
+            </div>
+            <div className="flex justify-between items-center text-xs text-slate-500 pt-2 border-t border-slate-800">
+              <span>Last Update:</span><span className="text-slate-300 font-mono">{deviceData.lastUpdated}</span>
+            </div>
+          </div>
+          <div className="mt-4 pt-4 border-t border-slate-800 text-xs text-slate-500 space-y-1">
+            <p className="font-semibold text-cyan-400">Built by Gesner Deslandes</p>
+            <p>Software Developer</p>
+            <p>📞 (509) 47385663</p>
+            <p>✉️ deslandes78@gmail.com</p>
+            <a href="https://deslandes1.github.io/G-COMMUNICATION-2026/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 mt-1">
+              <Icon name="link" className="w-3 h-3" /> G Jarvis Communication Portal
+            </a>
+          </div>
+        </div>
+
+        <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col h-[500px] md:h-[600px] shadow-xl">
+          <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex justify-between items-center">
+            <span className="text-xs font-semibold text-slate-300 tracking-wider uppercase flex items-center gap-2">
+              <Icon name="radio" className="w-4 h-4 text-cyan-400 animate-pulse" /> Real-time Geolocation
+            </span>
+            <span className="text-xs text-slate-500">
+              {deviceData.source === 'gps' ? 'Live GPS' : deviceData.source === 'search' ? 'Address Match' : 'Default View'}
+            </span>
+          </div>
+          <div className="flex-1 relative bg-slate-950">
+            <iframe title="GPS Tracker Map" className="w-full h-full dark-map border-0" src={mapSrc} loading="lazy" />
+            <div className="absolute top-4 left-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl text-xs space-y-1 max-w-[260px]">
+              <div className="font-bold text-cyan-400 flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${deviceData.source === 'gps' ? 'bg-emerald-400 animate-ping' : 'bg-cyan-400'}`} />
+                {deviceData.source === 'gps' ? 'Live GPS Active' : deviceData.source === 'search' ? 'Address Located' : 'Default View'}
+              </div>
+              <div className="text-slate-300 text-[11px] leading-snug">{deviceData.deviceName}</div>
+            </div>
+            {!gpsActive && deviceData.source !== 'search' && (
+              <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-sm text-center">
+                  <Icon name="map-pin" className="w-12 h-12 text-cyan-400 mx-auto mb-3" />
+                  <h3 className="text-base font-bold text-slate-100 mb-2">Enable GPS to Locate You</h3>
+                  <p className="text-xs text-slate-400 mb-4">
+                    Allow location access to see your exact position, or search by address above.
+                  </p>
+                  <button onClick={requestGPS} disabled={isLoading}
+                    className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2">
+                    <Icon name={isLoading ? 'loader' : 'crosshair'} className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                    {isLoading ? 'Requesting…' : 'Enable GPS'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <footer className="mt-8 border-t border-slate-800 pt-4 flex flex-col md:flex-row justify-between items-center gap-3 text-xs text-slate-500">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 justify-center md:justify-start">
+          <span className="font-semibold text-cyan-400">Gesner Deslandes</span><span>·</span>
+          <span>Software Developer</span><span>·</span>
+          <span>📞 (509) 47385663</span><span>·</span>
+          <span>✉️ deslandes78@gmail.com</span>
+        </div>
+        <div className="flex gap-3">
+          <a href="https://deslandes1.github.io/G-COMMUNICATION-2026/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">G Jarvis Portal</a>
+          <a href="https://deslandes1.github.io/GlobalInternet.py-Website-Static-Site-Conversion-2026/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">Website</a>
+        </div>
+      </footer>
+
+      {showEmergencyPanel && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-red-700/50 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto shadow-2xl">
+            <div className="bg-gradient-to-r from-red-700 to-red-900 px-5 py-4 rounded-t-2xl flex justify-between items-center sticky top-0 z-10">
+              <h2 className="text-white font-bold text-lg flex items-center gap-2">
+                <Icon name="alert-triangle" className="w-5 h-5" /> Locate Me For Help
+              </h2>
+              <button onClick={() => setShowEmergencyPanel(false)}
+                className="text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full p-1.5 transition-colors" aria-label="Close">
+                <Icon name="x" className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {saved && (
+                <div className="bg-emerald-900/30 border border-emerald-700/50 rounded-lg p-3 text-xs text-emerald-300 flex items-start gap-2">
+                  <Icon name="check-circle" className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>Emergency profile saved{savedAt ? ` on ${savedAt}` : ''}. Edit and re-save anytime.</span>
+                </div>
+              )}
+
+              <p className="text-xs text-slate-400 leading-relaxed">
+                In an emergency, tap the red button. Your exact GPS position will be sent
+                by <span className="text-cyan-300 font-semibold">email</span> (via Firebase, with picture attached)
+                and via <span className="text-emerald-300 font-semibold">WhatsApp</span>.
+              </p>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                  <Icon name="image" className="w-3.5 h-3.5 text-cyan-400" /> Profile Picture
+                </label>
+                <div className="flex items-center gap-3">
+                  <div className="w-16 h-16 rounded-full bg-slate-800 border-2 border-slate-700 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    {picPreviewUrl
+                      ? <img src={picPreviewUrl} alt="Profile preview" className="w-full h-full object-cover" />
+                      : <Icon name="user" className="w-7 h-7 text-slate-600" />}
+                  </div>
+                  <div className="flex-1 space-y-2">
+                    <input ref={fileRef} type="file" accept="image/*" onChange={handleFile}
+                      className="block w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-cyan-600 file:text-white hover:file:bg-cyan-500 file:cursor-pointer cursor-pointer bg-slate-950 border border-slate-700 rounded-lg" />
+                    {picName && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400 truncate">{picName}</span>
+                        <button onClick={clearPic} className="text-red-400 hover:text-red-300 font-semibold ml-2 flex-shrink-0">Remove</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                  <Icon name="mail" className="w-3.5 h-3.5 text-cyan-400" /> Emergency Email
+                  <span className="text-[10px] bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full normal-case">required</span>
+                </label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  placeholder="trusted-contact@example.com"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 transition-colors" />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                  <Icon name="message-circle" className="w-3.5 h-3.5 text-emerald-400" /> WhatsApp (Primary)
+                  <span className="text-[10px] bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full normal-case">required</span>
+                </label>
+                <input type="tel" value={wa1} onChange={e => setWa1(e.target.value)}
+                  placeholder="+509 4738 5663"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors" />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-300 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                  <Icon name="message-circle" className="w-3.5 h-3.5 text-slate-500" /> WhatsApp (Secondary)
+                  <span className="text-[10px] bg-slate-700/50 text-slate-400 px-2 py-0.5 rounded-full normal-case">optional</span>
+                </label>
+                <input type="tel" value={wa2} onChange={e => setWa2(e.target.value)}
+                  placeholder="+1 234 567 8900"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500 transition-colors" />
+              </div>
+
+              <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Location to send</p>
+                <p className="font-mono text-xs text-cyan-300">
+                  Lat: {deviceData.latitude.toFixed(6)} · Lng: {deviceData.longitude.toFixed(6)}
+                </p>
+                {deviceData.address && <p className="text-[11px] text-slate-400 mt-1 leading-snug">{deviceData.address}</p>}
+              </div>
+
+              {status && (
+                <div className={`rounded-lg p-3 text-xs flex items-start gap-2 ${
+                  statusType === 'success' ? 'bg-emerald-900/30 border border-emerald-700/50 text-emerald-300'
+                  : statusType === 'error' ? 'bg-red-900/30 border border-red-700/50 text-red-300'
+                  : 'bg-slate-800/50 border border-slate-700 text-slate-300'}`}>
+                  <Icon name={statusType === 'success' ? 'check-circle' : 'alert-triangle'} className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{status}</span>
+                </div>
+              )}
+
+              <button onClick={saveProfile}
+                className="w-full bg-slate-800 hover:bg-slate-700 border border-cyan-600/50 text-cyan-300 font-semibold text-sm py-3 rounded-xl flex items-center justify-center gap-2 transition-colors">
+                <Icon name="save" className="w-4 h-4" />
+                {saved ? 'Update Saved Emergency Profile' : 'Save Emergency Profile'}
+              </button>
+
+              <button onClick={sendEmergency} disabled={!saved || sending}
+                className={`w-full font-bold text-base py-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg ${
+                  saved && !sending
+                    ? 'bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 emergency-pulse text-white shadow-red-900/50'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'}`}>
+                <Icon name={sending ? 'loader' : 'alert-triangle'} className={`w-6 h-6 ${sending ? 'animate-spin' : ''}`} />
+                {sending ? 'SENDING…' : saved ? 'SEND EMERGENCY LOCATION NOW' : 'SAVE PROFILE FIRST TO ENABLE'}
+              </button>
+
+              <p className="text-[10px] text-slate-500 text-center leading-relaxed">
+                Emergency email is delivered automatically via Firebase Cloud Function (with picture attached).
+                WhatsApp links open your WhatsApp to send the message.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
 </body>
 </html>
