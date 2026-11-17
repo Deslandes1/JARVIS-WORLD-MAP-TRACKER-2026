@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. GPS Tracker — Global Locator</title>
+    <meta name="description" content="J.A.R.V.I.S. GPS Tracker — locate anyone anywhere in the world by GPS or street address. Built by Gesner Deslandes, Software Developer." />
+    <meta name="author" content="Gesner Deslandes" />
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body { background-color: #0f172a; margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
+        /* Dark JARVIS-style map filter */
+        .dark-map {
+            filter: invert(0.9) hue-rotate(180deg) contrast(1.2);
+        }
+        /* Branding banner */
+        .brand-bar {
+            background: linear-gradient(90deg, #0e7490 0%, #0891b2 50%, #06b6d4 100%);
+            padding: 6px 16px;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            color: #fff;
+            text-transform: uppercase;
+        }
+        .brand-bar span { color: #fef3c7; }
+    </style>
+</head>
+<body>
+
+<!-- Top branding bar with your info -->
+<div class="brand-bar">
+    ⚡ Built by <span>Gesner Deslandes</span> · Software Developer · 📞 (509) 47385663 · ✉️ deslandes78@gmail.com
+</div>
+
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // Custom Icon wrapper for Lucide
+    const Icon = ({ name, className }) => {
+        useEffect(() => {
+            if (window.lucide) {
+                window.lucide.createIcons({
+                    attrs: { class: className },
+                    nameAttr: 'data-lucide',
+                });
+            }
+        }, [name, className]);
+        return <i data-lucide={name} className={className}></i>;
+    };
+
+    // Nominatim (OpenStreetMap) geocoding — free, no API key required
+    const geocodeAddress = async (address) => {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`;
+        const res = await fetch(url, {
+            headers: { 'Accept': 'application/json' }
+        });
+        if (!res.ok) throw new Error('Geocoding failed');
+        const data = await res.json();
+        if (!data || data.length === 0) throw new Error('Address not found');
+        return {
+            lat: parseFloat(data[0].lat),
+            lng: parseFloat(data[0].lon),
+            displayName: data[0].display_name
+        };
+    };
+
+    // Reverse geocoding — turn coords into a readable address
+    const reverseGeocode = async (lat, lng) => {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`;
+        const res = await fetch(url, {
+            headers: { 'Accept': 'application/json' }
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.display_name || null;
+    };
+
+    function App() {
+        // Default fallback: Port-au-Prince, Haiti
+        const [deviceData, setDeviceData] = useState({
+            latitude: 18.5392,
+            longitude: -72.3364,
+            accuracy: null,
+            battery: 88,
+            signalStrength: 'Awaiting GPS lock…',
+            lastUpdated: 'Never',
+            status: 'STANDBY',
+            deviceName: 'Browser GPS Tracker',
+            address: null,
+            source: 'default'
+        });
+
+        const [isLoading, setIsLoading] = useState(false);
+        const [gpsError, setGpsError] = useState(null);
+        const [searchQuery, setSearchQuery] = useState('');
+        const [searchError, setSearchError] = useState(null);
+        const [isSearching, setIsSearching] = useState(false);
+        const [gpsActive, setGpsActive] = useState(false);
+
+        // Request GPS from the browser
+        const requestGPS = useCallback(() => {
+            if (!navigator.geolocation) {
+                setGpsError('Geolocation is not supported by this browser.');
+                return;
+            }
+            setIsLoading(true);
+            setGpsError(null);
+            navigator.geolocation.getCurrentPosition(
+                async (pos) => {
+                    const { latitude, longitude, accuracy } = pos.coords;
+                    const address = await reverseGeocode(latitude, longitude);
+                    setDeviceData({
+                        latitude,
+                        longitude,
+                        accuracy: Math.round(accuracy),
+                        battery: 100,
+                        signalStrength: 'GPS Satellite Lock',
+                        lastUpdated: new Date().toLocaleTimeString(),
+                        status: 'ONLINE',
+                        deviceName: 'Browser GPS Tracker',
+                        address,
+                        source: 'gps'
+                    });
+                    setIsLoading(false);
+                    setGpsActive(true);
+                },
+                (err) => {
+                    let msg = 'GPS access denied or unavailable.';
+                    if (err.code === 1) msg = 'Permission denied. Enable location access in your browser settings.';
+                    else if (err.code === 2) msg = 'GPS position unavailable. Check your device signal.';
+                    else if (err.code === 3) msg = 'GPS request timed out. Try again.';
+                    setGpsError(msg);
+                    setIsLoading(false);
+                    setDeviceData(prev => ({ ...prev, status: 'OFFLINE', signalStrength: 'No GPS' }));
+                },
+                { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+            );
+        }, []);
+
+        // Search by street address
+        const handleAddressSearch = async (e) => {
+            e.preventDefault();
+            if (!searchQuery.trim()) return;
+            setIsSearching(true);
+            setSearchError(null);
+            try {
+                const result = await geocodeAddress(searchQuery.trim());
+                setDeviceData({
+                    latitude: result.lat,
+                    longitude: result.lng,
+                    accuracy: null,
+                    battery: 100,
+                    signalStrength: 'Address Lookup',
+                    lastUpdated: new Date().toLocaleTimeString(),
+                    status: 'LOCATED',
+                    deviceName: result.displayName.split(',')[0] || 'Searched Address',
+                    address: result.displayName,
+                    source: 'search'
+                });
+                setGpsActive(false);
+            } catch (err) {
+                setSearchError('Address not found. Try a more specific location.');
+            } finally {
+                setIsSearching(false);
+            }
+        };
+
+        // Auto-request GPS on first load (browser will prompt permission)
+        useEffect(() => {
+            requestGPS();
+        }, [requestGPS]);
+
+        // Build OSM iframe URL
+        const bboxDelta = 0.01;
+        const mapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${deviceData.longitude - bboxDelta}%2C${deviceData.latitude - bboxDelta}%2C${deviceData.longitude + bboxDelta}%2C${deviceData.latitude + bboxDelta}&layer=mapnik&marker=${deviceData.latitude}%2C${deviceData.longitude}`;
+
+        const googleMapsLink = `https://www.google.com/maps?q=${deviceData.latitude},${deviceData.longitude}`;
+
+        return (
+            <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-6 font-sans">
+
+                {/* Header */}
+                <header className="mb-6 border-b border-slate-800 pb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div>
+                        <h1 className="text-xl md:text-2xl font-bold text-cyan-400 tracking-wider flex items-center gap-3">
+                            <Icon name="Shield" className="w-7 h-7" />
+                            J.A.R.V.I.S. GLOBAL GPS TRACKER
+                        </h1>
+                        <p className="text-xs md:text-sm text-slate-500 mt-1 flex items-center gap-2">
+                            <Icon name="Globe" className="w-4 h-4" />
+                            Locate anyone, anywhere — by GPS or street address
+                        </p>
+                    </div>
+                    <div className="flex gap-2 w-full md:w-auto">
+                        <button
+                            onClick={requestGPS}
+                            disabled={isLoading}
+                            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                        >
+                            <Icon name="Crosshair" className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                            {isLoading ? 'Locating…' : 'Locate Me (GPS)'}
+                        </button>
+                        <a
+                            href={googleMapsLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                        >
+                            <Icon name="ExternalLink" className="w-4 h-4" />
+                            Open in Maps
+                        </a>
+                    </div>
+                </header>
+
+                {/* GPS / Search error banner */}
+                {(gpsError || searchError) && (
+                    <div className="mb-4 bg-red-900/30 border border-red-700/50 rounded-lg p-3 text-sm text-red-300 flex items-start gap-2">
+                        <Icon name="AlertTriangle" className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                        <span>{gpsError || searchError}</span>
+                    </div>
+                )}
+
+                {/* Address Search Bar */}
+                <form onSubmit={handleAddressSearch} className="mb-6">
+                    <div className="flex flex-col sm:flex-row gap-2">
+                        <div className="relative flex-1">
+                            <Icon name="Search" className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Enter any street address, city, landmark, or ZIP code — anywhere in the world"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            disabled={isSearching}
+                            className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-6 py-3 rounded-lg text-sm font-semibold transition-colors"
+                        >
+                            <Icon name={isSearching ? 'Loader' : 'MapPin'} className={`w-4 h-4 ${isSearching ? 'animate-spin' : ''}`} />
+                            {isSearching ? 'Searching…' : 'Find Address'}
+                        </button>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                        <Icon name="Info" className="w-3 h-3" />
+                        Powered by OpenStreetMap Nominatim — free global geocoding
+                    </p>
+                </form>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Left panel — diagnostics */}
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-5 shadow-xl">
+                        <div className="flex justify-between items-center">
+                            <h2 className="text-sm font-semibold tracking-wide text-slate-300 uppercase flex items-center gap-2">
+                                <Icon name="Cpu" className="w-4 h-4 text-cyan-400" />
+                                Diagnostics
+                            </h2>
+                            <span className={`px-2.5 py-0.5 text-xs font-semibold rounded-full flex items-center gap-1 ${
+                                deviceData.status === 'ONLINE' || deviceData.status === 'LOCATED'
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                            }`}>
+                                <span className={`w-2 h-2 rounded-full ${
+                                    deviceData.status === 'ONLINE' || deviceData.status === 'LOCATED'
+                                        ? 'bg-emerald-400 animate-pulse'
+                                        : 'bg-amber-400'
+                                }`}></span>
+                                {deviceData.status}
+                            </span>
+                        </div>
+
+                        <div className="space-y-3">
+                            <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                                <p className="text-xs text-slate-500 uppercase mb-1">Target Location</p>
+                                <p className="text-sm font-medium text-slate-200">
+                                    {deviceData.deviceName}
+                                </p>
+                                {deviceData.address && (
+                                    <p className="text-xs text-slate-400 mt-1 leading-snug">
+                                        {deviceData.address}
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                                    <div className="flex items-center space-x-1.5 text-slate-400 mb-1">
+                                        <Icon name="Battery" className="w-3.5 h-3.5 text-emerald-400" />
+                                        <span className="text-xs">Battery</span>
+                                    </div>
+                                    <p className="text-base font-bold text-slate-100">{deviceData.battery}%</p>
+                                </div>
+                                <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800">
+                                    <div className="flex items-center space-x-1.5 text-slate-400 mb-1">
+                                        <Icon name="Signal" className="w-3.5 h-3.5 text-cyan-400" />
+                                        <span className="text-xs">Source</span>
+                                    </div>
+                                    <p className="text-xs font-semibold text-slate-200 mt-1">
+                                        {deviceData.signalStrength}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800 space-y-2">
+                                <div className="flex items-center space-x-1.5 text-slate-400">
+                                    <Icon name="MapPin" className="w-3.5 h-3.5 text-red-400" />
+                                    <span className="text-xs">GPS Coordinates</span>
+                                </div>
+                                <div className="font-mono text-sm text-cyan-300 leading-relaxed">
+                                    Lat: {deviceData.latitude.toFixed(5)}<br />
+                                    Lng: {deviceData.longitude.toFixed(5)}
+                                </div>
+                                {deviceData.accuracy && (
+                                    <p className="text-xs text-slate-500">
+                                        Accuracy: ±{deviceData.accuracy} meters
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className="flex justify-between items-center text-xs text-slate-500 pt-2 border-t border-slate-800">
+                                <span>Last Update:</span>
+                                <span className="text-slate-300 font-mono">{deviceData.lastUpdated}</span>
+                            </div>
+                        </div>
+
+                        {/* Bottom info card with your details */}
+                        <div className="mt-4 pt-4 border-t border-slate-800 text-xs text-slate-500 space-y-1">
+                            <p className="font-semibold text-cyan-400">Built by Gesner Deslandes</p>
+                            <p>Software Developer</p>
+                            <p>📞 (509) 47385663</p>
+                            <p>✉️ deslandes78@gmail.com</p>
+                            <a
+                                href="https://deslandes1.github.io/G-COMMUNICATION-2026/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1 mt-1"
+                            >
+                                <Icon name="Link" className="w-3 h-3" />
+                                G Jarvis Communication Portal
+                            </a>
+                        </div>
+                    </div>
+
+                    {/* Right panel — map */}
+                    <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col h-[500px] md:h-[600px] shadow-xl">
+                        <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex justify-between items-center">
+                            <span className="text-xs font-semibold text-slate-300 tracking-wider uppercase flex items-center gap-2">
+                                <Icon name="Radio" className="w-4 h-4 text-cyan-400 animate-pulse" />
+                                Real-time Geolocation
+                            </span>
+                            <span className="text-xs text-slate-500">
+                                {deviceData.source === 'gps' ? 'Live GPS' :
+                                 deviceData.source === 'search' ? 'Address Match' : 'Default View'}
+                            </span>
+                        </div>
+
+                        <div className="flex-1 relative bg-slate-950">
+                            <iframe
+                                title="GPS Tracker Map"
+                                className="w-full h-full dark-map border-0"
+                                src={mapSrc}
+                                loading="lazy"
+                            />
+
+                            {/* Overlay status card */}
+                            <div className="absolute top-4 left-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg shadow-xl text-xs space-y-1 max-w-[260px]">
+                                <div className="font-bold text-cyan-400 flex items-center gap-1.5">
+                                    <span className={`w-2 h-2 rounded-full ${
+                                        deviceData.source === 'gps' ? 'bg-emerald-400 animate-ping' : 'bg-cyan-400'
+                                    }`} />
+                                    {deviceData.source === 'gps' ? 'Live GPS Active' :
+                                     deviceData.source === 'search' ? 'Address Located' :
+                                     'Default View'}
+                                </div>
+                                <div className="text-slate-300 text-[11px] leading-snug">
+                                    {deviceData.deviceName}
+                                </div>
+                            </div>
+
+                            {/* GPS activation prompt overlay */}
+                            {!gpsActive && deviceData.source !== 'search' && (
+                                <div className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+                                    <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-sm text-center">
+                                        <Icon name="MapPin" className="w-12 h-12 text-cyan-400 mx-auto mb-3" />
+                                        <h3 className="text-base font-bold text-slate-100 mb-2">
+                                            Enable GPS to Locate You
+                                        </h3>
+                                        <p className="text-xs text-slate-400 mb-4">
+                                            Your browser will ask for location permission. Allow it to see your exact position, or search by address above.
+                                        </p>
+                                        <button
+                                            onClick={requestGPS}
+                                            disabled={isLoading}
+                                            className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+                                        >
+                                            <Icon name={isLoading ? 'Loader' : 'Crosshair'} className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                                            {isLoading ? 'Requesting…' : 'Enable GPS'}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Footer with full contact info */}
+                <footer className="mt-8 border-t border-slate-800 pt-4 flex flex-col md:flex-row justify-between items-center gap-3 text-xs text-slate-500">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 justify-center md:justify-start">
+                        <span className="font-semibold text-cyan-400">Gesner Deslandes</span>
+                        <span>·</span>
+                        <span>Software Developer</span>
+                        <span>·</span>
+                        <span>📞 (509) 47385663</span>
+                        <span>·</span>
+                        <span>✉️ deslandes78@gmail.com</span>
+                    </div>
+                    <div className="flex gap-3">
+                        <a href="https://deslandes1.github.io/G-COMMUNICATION-2026/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">
+                            G Jarvis Portal
+                        </a>
+                        <a href="https://deslandes1.github.io/GlobalInternet.py-Website-Static-Site-Conversion-2026/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">
+                            Website
+                        </a>
+                    </div>
+                </footer>
+            </div>
+        );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+
+</body>
+</html>
